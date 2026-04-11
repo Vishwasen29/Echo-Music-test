@@ -243,8 +243,8 @@ fun BottomSheetPlayer(
     val isPlaying by playerConnection.isPlaying.collectAsState()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
     val currentSong by playerConnection.currentSong.collectAsState(initial = null)
+    val currentFormat by playerConnection.currentFormat.collectAsState(initial = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
-    val database = LocalDatabase.current
     val currentFormat by database.format(mediaMetadata?.id).collectAsState(initial = null)
     val automix by playerConnection.service.automixItems.collectAsState()
     val repeatMode by playerConnection.repeatMode.collectAsState()
@@ -2157,8 +2157,6 @@ fun BottomSheetPlayer(
                         ) {
                         
                         // WiFi Audio devices - Google Cast integration
-                        val coroutineScope = rememberCoroutineScope()
-                        
                         // Check for required permissions before initializing Cast
                         val hasRequiredPermissions = remember {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
