@@ -170,6 +170,22 @@ fun ShowMediaInfo(videoId: String) {
                 }
             }
 
+
+            item {
+                InfoCard(title = "Playback") {
+                    InfoRow(
+                        painter = painterResource(R.drawable.audio_device),
+                        label = "Audio source",
+                        value = describeAudioSource(currentFormat)
+                    )
+                    InfoRow(
+                        painter = painterResource(R.drawable.speed),
+                        label = "Audio summary",
+                        value = describeAudioSummary(currentFormat)
+                    )
+                }
+            }
+
             // --- SECTION 1: TECHNICAL INFO (Format) ---
             if (currentFormat != null) {
                 item {
@@ -390,6 +406,23 @@ private fun detectAudioSource(format: FormatEntity?): String? {
         format.itag < 0 -> "JioSaavn"
         // Default / native extractor path remains YouTube Music.
         else -> "YouTube Music"
+    }
+}
+
+
+private fun describeAudioSource(format: FormatEntity?): String = when {
+    format == null -> "Unknown"
+    format.itag < 0 -> "JioSaavn"
+    else -> "YouTube Music"
+}
+
+private fun describeAudioSummary(format: FormatEntity?): String? {
+    val bitrate = format?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+    val source = describeAudioSource(format)
+    return when {
+        bitrate != null -> "$source • $bitrate"
+        format != null -> source
+        else -> null
     }
 }
 

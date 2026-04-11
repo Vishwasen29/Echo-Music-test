@@ -340,6 +340,7 @@ class MusicService :
     private var retryJob: Job? = null
 
     private val songUrlCache = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Long>>()
+    private val forcedYoutubeFallbackIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     // Enhanced error tracking for strict retry management
     private var currentMediaIdRetryCount = mutableMapOf<String, Int>()
@@ -2138,6 +2139,15 @@ class MusicService :
                 return
             }
 
+            if (mediaId != null &&
+                !forcedYoutubeFallbackIds.contains(mediaId) &&
+                runBlocking(Dispatchers.IO) { isSaavnBackedTrack(mediaId) }
+            ) {
+                Log.w("MusicService", "Saavn-backed playback failed for $mediaId, retrying with YouTube fallback")
+                retryCurrentTrackWithYoutube(mediaId)
+                return
+            }
+
             // Aggressive cache clearing for all playback errors
             if (mediaId != null) {
                 performAggressiveCacheClear(mediaId)
@@ -2597,7 +2607,9 @@ class MusicService :
     }
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
+        if (forcedYoutubeFallbackIds.contains(mediaId)) return null
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
+        if (metadata.isVideoSong) return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
@@ -2618,6 +2630,39 @@ class MusicService :
                 playbackUrl = null,
             ),
         )
+    }
+
+    private suspend fun isSaavnBackedTrack(mediaId: String): Boolean {
+        songUrlCache[mediaId]?.first?.let { cachedUrl ->
+            if (cachedUrl.contains("saavn", ignoreCase = true)) return true
+        }
+        return database.format(mediaId).first()?.itag?.let { it < 0 } == true
+    }
+
+    private fun retryCurrentTrackWithYoutube(mediaId: String) {
+        forcedYoutubeFallbackIds.add(mediaId)
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            try {
+                performAggressiveCacheClear(mediaId)
+                delay(500)
+
+                val currentIndex = player.currentMediaItemIndex
+                if (currentIndex == C.INDEX_UNSET) {
+                    handleFinalFailure()
+                    return@launch
+                }
+
+                val currentPosition = player.currentPosition.coerceAtLeast(0L)
+                player.seekTo(currentIndex, currentPosition)
+                player.prepare()
+                player.play()
+                Log.d("MusicService", "Retrying playback for $mediaId with forced YouTube fallback")
+            } catch (e: Exception) {
+                Log.e("MusicService", "Forced YouTube fallback failed for $mediaId", e)
+                handleFinalFailure()
+            }
+        }
     }
 
     private fun createMediaSourceFactory() =
