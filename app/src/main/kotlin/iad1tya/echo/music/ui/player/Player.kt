@@ -926,6 +926,9 @@ fun BottomSheetPlayer(
                             )
                         }
 
+                    }
+                }
+
                     val playerAudioSource = when {
                         currentFormat == null -> "Source pending"
                         currentFormat!!.itag < 0 -> "JioSaavn"
@@ -2577,7 +2580,6 @@ fun InlineLyricsView(
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
     val lyrics = remember(currentLyrics) { currentLyrics?.lyrics?.trim() }
     val context = LocalContext.current
-    val database = LocalDatabase.current
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(mediaMetadata?.id, currentLyrics) {
