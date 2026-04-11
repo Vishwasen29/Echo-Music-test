@@ -32,9 +32,7 @@ import iad1tya.echo.music.db.entities.FormatEntity
 import iad1tya.echo.music.db.entities.SongEntity
 import iad1tya.echo.music.di.DownloadCache
 import iad1tya.echo.music.di.PlayerCache
-import iad1tya.echo.music.models.toMediaMetadata
 import iad1tya.echo.music.utils.StreamClientUtils
-import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.YTPlayerUtils
 import iad1tya.echo.music.utils.dataStore
 import iad1tya.echo.music.utils.enumPreference
@@ -114,27 +112,6 @@ constructor(
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            resolveSaavnDownload(mediaId)?.let { resolved ->
-                database.query {
-                    upsert(resolved.formatEntity)
-
-                    val now = LocalDateTime.now()
-                    val existing = getSongByIdBlocking(mediaId)?.song
-                    when {
-                        existing != null && existing.dateDownload == null -> upsert(existing.copy(dateDownload = now))
-                        existing == null && resolved.metadata != null -> upsert(
-                            resolved.metadata.toSongEntity().copy(
-                                dateDownload = now,
-                                isDownloaded = false,
-                            )
-                        )
-                    }
-                }
-
-                songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
-                return@Factory dataSpec.withUri(resolved.url.toUri())
-            }
-
             val playbackData = runBlocking(Dispatchers.IO) {
                 YTPlayerUtils.playerResponseForPlayback(
                     mediaId,
@@ -195,44 +172,6 @@ constructor(
                 streamUrl to (System.currentTimeMillis() + playbackData.streamExpiresInSeconds * 1000L)
             dataSpec.withUri(streamUrl.toUri())
         }
-
-    private data class ExternalResolvedUrl(
-        val url: String,
-        val expiresAtMs: Long,
-        val formatEntity: FormatEntity,
-        val metadata: iad1tya.echo.music.models.MediaMetadata?,
-    )
-
-    private fun codecForMimeType(mimeType: String): String = when {
-        mimeType.contains("mp4", ignoreCase = true) || mimeType.contains("aac", ignoreCase = true) -> "mp4a.40.2"
-        mimeType.contains("opus", ignoreCase = true) || mimeType.contains("webm", ignoreCase = true) -> "opus"
-        else -> "mp3"
-    }
-
-    private suspend fun resolveSaavnDownload(mediaId: String): ExternalResolvedUrl? {
-        val metadata = database.song(mediaId).first()?.toMediaMetadata() ?: return null
-        val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
-        val bitrate = resolved.bitrate ?: when (audioQuality) {
-            AudioQuality.LOW -> 96_000
-            AudioQuality.AUTO, AudioQuality.HIGH -> 320_000
-        }
-        return ExternalResolvedUrl(
-            url = resolved.url,
-            expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-            metadata = metadata,
-            formatEntity = FormatEntity(
-                id = mediaId,
-                itag = -320,
-                mimeType = resolved.mimeType,
-                codecs = codecForMimeType(resolved.mimeType),
-                bitrate = bitrate,
-                sampleRate = resolved.sampleRate,
-                contentLength = 0L,
-                loudnessDb = null,
-                playbackUrl = null,
-            ),
-        )
-    }
 
     val downloadNotificationHelper =
         DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
