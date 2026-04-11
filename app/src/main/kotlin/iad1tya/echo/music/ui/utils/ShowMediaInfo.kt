@@ -185,6 +185,11 @@ fun ShowMediaInfo(videoId: String) {
                             value = currentFormat?.codecs
                         )
                         InfoRow(
+                            painter = painterResource(R.drawable.link),
+                            label = "Audio source",
+                            value = detectAudioSource(currentFormat)
+                        )
+                        InfoRow(
                             painter = painterResource(R.drawable.speed),
                             label = stringResource(R.string.bitrate),
                             value = currentFormat?.bitrate?.let { "${it / 1000} Kbps" }
@@ -262,6 +267,13 @@ fun ShowMediaInfo(videoId: String) {
                              value = currentFormat?.itag.toString()
                          )
                      }
+                     InfoRow(
+                         painter = painterResource(R.drawable.integration),
+                         label = "Source rule",
+                         value = currentFormat?.itag?.let {
+                             if (it < 0) "Negative itag = JioSaavn resolver" else "Standard itag = YouTube Music"
+                         }
+                     )
                 }
             }
             
@@ -367,6 +379,17 @@ fun StatItem(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+
+private fun detectAudioSource(format: FormatEntity?): String? {
+    format ?: return null
+    return when {
+        // The hybrid patch stores JioSaavn-resolved formats with a negative itag.
+        format.itag < 0 -> "JioSaavn"
+        // Default / native extractor path remains YouTube Music.
+        else -> "YouTube Music"
     }
 }
 
