@@ -170,6 +170,22 @@ fun ShowMediaInfo(videoId: String) {
                 }
             }
 
+
+            item {
+                InfoCard(title = "Playback") {
+                    InfoRow(
+                        painter = painterResource(R.drawable.audio_device),
+                        label = "Audio source",
+                        value = describeAudioSource(currentFormat)
+                    )
+                    InfoRow(
+                        painter = painterResource(R.drawable.speed),
+                        label = "Audio summary",
+                        value = describeAudioSummary(currentFormat)
+                    )
+                }
+            }
+
             // --- SECTION 1: TECHNICAL INFO (Format) ---
             if (currentFormat != null) {
                 item {
@@ -187,7 +203,7 @@ fun ShowMediaInfo(videoId: String) {
                         InfoRow(
                             painter = painterResource(R.drawable.link),
                             label = "Audio source",
-                            value = currentFormat?.let { if (it.itag < 0) "JioSaavn" else "YouTube Music" }
+                            value = detectAudioSource(currentFormat)
                         )
                         InfoRow(
                             painter = painterResource(R.drawable.speed),
@@ -267,6 +283,13 @@ fun ShowMediaInfo(videoId: String) {
                              value = currentFormat?.itag.toString()
                          )
                      }
+                     InfoRow(
+                         painter = painterResource(R.drawable.integration),
+                         label = "Source rule",
+                         value = currentFormat?.itag?.let {
+                             if (it < 0) "Negative itag = JioSaavn resolver" else "Standard itag = YouTube Music"
+                         }
+                     )
                 }
             }
             
@@ -372,6 +395,34 @@ fun StatItem(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+
+private fun detectAudioSource(format: FormatEntity?): String? {
+    format ?: return null
+    return when {
+        // The hybrid patch stores JioSaavn-resolved formats with a negative itag.
+        format.itag < 0 -> "JioSaavn"
+        // Default / native extractor path remains YouTube Music.
+        else -> "YouTube Music"
+    }
+}
+
+
+private fun describeAudioSource(format: FormatEntity?): String = when {
+    format == null -> "Unknown"
+    format.itag < 0 -> "JioSaavn"
+    else -> "YouTube Music"
+}
+
+private fun describeAudioSummary(format: FormatEntity?): String? {
+    val bitrate = format?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+    val source = describeAudioSource(format)
+    return when {
+        bitrate != null -> "$source • $bitrate"
+        format != null -> source
+        else -> null
     }
 }
 

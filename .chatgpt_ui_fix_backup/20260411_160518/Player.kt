@@ -924,16 +924,22 @@ fun BottomSheetPlayer(
                                     )
                             )
                         }
+
                     }
                 }
 
-                val playerAudioInfo = currentFormat?.let { format ->
-                    val source = if (format.itag < 0) "JioSaavn" else "YouTube Music"
-                    val bitrate = format.bitrate.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
-                    listOfNotNull(source, bitrate).joinToString(" • ")
-                } ?: "Source pending"
+                val format = currentFormat
+                val playerAudioInfo = remember(format) {
+                    val source = when {
+                        format == null -> "Source pending"
+                        format.itag < 0 -> "JioSaavn"
+                        else -> "YouTube Music"
+                    }
+                    val bitrateText = format?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+                    listOfNotNull(source, bitrateText).joinToString(" • ")
+                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
 
                 Text(
                     text = playerAudioInfo,
@@ -2147,8 +2153,6 @@ fun BottomSheetPlayer(
                         ) {
                         
                         // WiFi Audio devices - Google Cast integration
-                        val coroutineScope = rememberCoroutineScope()
-                        
                         // Check for required permissions before initializing Cast
                         val hasRequiredPermissions = remember {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -2570,7 +2574,6 @@ fun InlineLyricsView(
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
     val lyrics = remember(currentLyrics) { currentLyrics?.lyrics?.trim() }
     val context = LocalContext.current
-    val database = LocalDatabase.current
     val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(mediaMetadata?.id, currentLyrics) {
