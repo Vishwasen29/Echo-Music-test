@@ -2600,8 +2600,8 @@ class MusicService :
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
-            AudioQuality.LOW -> 96_000
-            AudioQuality.AUTO, AudioQuality.HIGH -> 320_000
+            iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
+            else -> 320_000
         }
         return ExternalResolvedUrl(
             url = resolved.url,
