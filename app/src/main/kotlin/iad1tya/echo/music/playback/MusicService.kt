@@ -365,7 +365,7 @@ class MusicService :
 
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
-            AudioQuality.LOW -> 96_000
+            iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
             else -> 320_000
         }
         val playbackUrlMarker = "saavn://${resolved.songId}"
@@ -375,10 +375,7 @@ class MusicService :
                 ?.map { iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = it) }
                 ?: metadata.artists,
             thumbnailUrl = resolved.thumbnailUrl ?: metadata.thumbnailUrl,
-            album = resolved.albumName
-                ?.takeIf { it.isNotBlank() }
-                ?.let { iad1tya.echo.music.models.MediaMetadata.Album(id = metadata.album?.id ?: mediaId, title = it) }
-                ?: metadata.album,
+            album = metadata.album,
         )
 
         persistSaavnMetadata(mediaId, saavnMetadata)
