@@ -57,6 +57,7 @@ import coil3.compose.AsyncImage
 import com.echo.innertube.YouTube
 import com.echo.innertube.models.MediaInfo
 import iad1tya.echo.music.LocalDatabase
+import iad1tya.echo.music.LocalPlayerConnection
 import iad1tya.echo.music.R
 import iad1tya.echo.music.db.entities.FormatEntity
 import iad1tya.echo.music.db.entities.Song
@@ -72,6 +73,7 @@ fun ShowMediaInfo(videoId: String) {
     val database = LocalDatabase.current
     var song by remember { mutableStateOf<Song?>(null) }
     var currentFormat by remember { mutableStateOf<FormatEntity?>(null) }
+    val playerConnection = LocalPlayerConnection.current
 
     LaunchedEffect(videoId) {
         YouTube.getMediaInfo(videoId).onSuccess { info = it }
@@ -181,11 +183,6 @@ fun ShowMediaInfo(videoId: String) {
                             painter = painterResource(R.drawable.integration),
                             label = stringResource(R.string.codecs),
                             value = currentFormat?.codecs
-                        )
-                        InfoRow(
-                            painter = painterResource(R.drawable.audio_device),
-                            label = "Audio source",
-                            value = describeAudioSource(currentFormat)
                         )
                         InfoRow(
                             painter = painterResource(R.drawable.speed),
@@ -379,16 +376,4 @@ fun compactNumberFormatter(count: Int): String {
         count < 1000000 -> String.format("%.1fK", count / 1000.0)
         else -> String.format("%.1fM", count / 1000000.0)
     }
-}
-
-
-private fun isSaavnFormat(format: FormatEntity?): Boolean {
-    if (format == null) return false
-    return format.playbackUrl?.startsWith("saavn://") == true || (format.itag < 0)
-}
-
-private fun describeAudioSource(format: FormatEntity?): String? = when {
-    format == null -> null
-    isSaavnFormat(format) -> "JioSaavn"
-    else -> "YouTube Music"
 }

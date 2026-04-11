@@ -193,7 +193,6 @@ import iad1tya.echo.music.playback.queues.filterVideoSongs
 import iad1tya.echo.music.utils.CoilBitmapLoader
 import iad1tya.echo.music.utils.NetworkConnectivityObserver
 import iad1tya.echo.music.utils.StreamClientUtils
-import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.SyncUtils
 import iad1tya.echo.music.utils.TTSManager
 import iad1tya.echo.music.utils.MusicHapticsManager
@@ -301,111 +300,6 @@ class MusicService :
         currentMediaMetadata.flatMapLatest { mediaMetadata ->
             database.format(mediaMetadata?.id)
         }
-
-    private data class ExternalResolvedUrl(
-        val url: String,
-        val expiresAtMs: Long,
-        val formatEntity: FormatEntity,
-        val metadata: iad1tya.echo.music.models.MediaMetadata,
-    )
-
-    private val forcedYoutubeFallbackIds = mutableSetOf<String>()
-
-    private suspend fun resolveMetadataForMediaId(mediaId: String): iad1tya.echo.music.models.MediaMetadata? {
-        val queuedMetadata = withContext(Dispatchers.Main) {
-            player.mediaItems.firstOrNull { it.mediaId == mediaId }?.metadata
-        }
-        if (queuedMetadata != null) return queuedMetadata
-        return database.song(mediaId).first()?.toMediaMetadata()
-    }
-
-    private fun codecForMimeType(mimeType: String): String = when {
-        mimeType.contains("mp4", ignoreCase = true) || mimeType.contains("aac", ignoreCase = true) -> "mp4a.40.2"
-        mimeType.contains("opus", ignoreCase = true) || mimeType.contains("webm", ignoreCase = true) -> "opus"
-        else -> "mp3"
-    }
-
-    private fun isSaavnBackedTrack(mediaId: String): Boolean {
-        val format = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
-        return format?.playbackUrl?.startsWith("saavn://") == true || ((format?.itag ?: 0) < 0)
-    }
-
-    private fun retryCurrentTrackWithYoutube(mediaId: String) {
-        forcedYoutubeFallbackIds.add(mediaId)
-        songUrlCache.remove(mediaId)
-        performAggressiveCacheClear(mediaId)
-        val currentIndex = player.currentMediaItemIndex
-        player.stop()
-        if (currentIndex >= 0) {
-            player.seekToDefaultPosition(currentIndex)
-        }
-        player.prepare()
-        player.playWhenReady = true
-    }
-
-    private fun persistSaavnMetadata(
-        mediaId: String,
-        saavnMetadata: iad1tya.echo.music.models.MediaMetadata,
-    ) {
-        database.query {
-            val existingSong = getSongByIdBlocking(mediaId)
-            if (existingSong != null) {
-                update(existingSong, saavnMetadata)
-            } else {
-                upsert(saavnMetadata.toSongEntity())
-            }
-        }
-    }
-
-    private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-        if (forcedYoutubeFallbackIds.contains(mediaId)) return null
-
-        val metadata = resolveMetadataForMediaId(mediaId) ?: return null
-        if (metadata.isVideoSong) return null
-
-        val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
-        val bitrate = resolved.bitrate ?: when (audioQuality) {
-            AudioQuality.LOW -> 96_000
-            else -> 320_000
-        }
-        val playbackUrlMarker = "saavn://${resolved.songId}"
-        val saavnMetadata = metadata.copy(
-            title = resolved.matchedTitle.ifBlank { metadata.title },
-            artists = resolved.matchedArtists.takeIf { it.isNotEmpty() }
-                ?.map { iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = it) }
-                ?: metadata.artists,
-            thumbnailUrl = resolved.thumbnailUrl ?: metadata.thumbnailUrl,
-            album = resolved.albumName
-                ?.takeIf { it.isNotBlank() }
-                ?.let { iad1tya.echo.music.models.MediaMetadata.Album(id = metadata.album?.id ?: mediaId, title = it) }
-                ?: metadata.album,
-        )
-
-        persistSaavnMetadata(mediaId, saavnMetadata)
-
-        withContext(Dispatchers.Main) {
-            if (player.currentMetadata?.id == mediaId || currentMediaMetadata.value?.id == mediaId) {
-                currentMediaMetadata.value = saavnMetadata
-            }
-        }
-
-        return ExternalResolvedUrl(
-            url = resolved.url,
-            expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-            metadata = saavnMetadata,
-            formatEntity = FormatEntity(
-                id = mediaId,
-                itag = -320,
-                mimeType = resolved.mimeType,
-                codecs = codecForMimeType(resolved.mimeType),
-                bitrate = bitrate,
-                sampleRate = resolved.sampleRate,
-                contentLength = 0L,
-                loudnessDb = null,
-                playbackUrl = playbackUrlMarker,
-            ),
-        )
-    }
 
     val playerVolume = MutableStateFlow(1f)
     val eqCapabilities = MutableStateFlow<EqCapabilities?>(null)
@@ -2243,11 +2137,6 @@ class MusicService :
                 return
             }
 
-            if (mediaId != null && isSaavnBackedTrack(mediaId) && !forcedYoutubeFallbackIds.contains(mediaId)) {
-                retryCurrentTrackWithYoutube(mediaId)
-                return
-            }
-
             // Aggressive cache clearing for all playback errors
             if (mediaId != null) {
                 performAggressiveCacheClear(mediaId)
@@ -2600,13 +2489,6 @@ class MusicService :
             songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 return@Factory dataSpec.withUri(it.first.toUri())
-            }
-
-            runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
-                database.query { upsert(resolved.formatEntity) }
-                scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
-                return@Factory dataSpec.withUri(resolved.url.toUri())
             }
 
             // Need to fetch a new URL - either first time or URL expired
@@ -3128,12 +3010,6 @@ class MusicService :
         
         // Resolve URL if not cached
         return try {
-            resolveSaavnUrl(mediaId)?.let { resolved ->
-                database.query { upsert(resolved.formatEntity) }
-                songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
-                return resolved.url
-            }
-
             val isUploadedSong = database.song(mediaId).first()?.song?.isUploaded == true
             val playbackData = YTPlayerUtils.playerResponseForPlayback(
                 videoId = mediaId,
