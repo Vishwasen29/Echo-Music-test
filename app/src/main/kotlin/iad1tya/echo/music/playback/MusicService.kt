@@ -2492,7 +2492,7 @@ class MusicService :
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            resolveSaavnUrl(mediaId)?.let { resolved ->
+            runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
                 database.query { upsert(resolved.formatEntity) }
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
@@ -3062,7 +3062,7 @@ class MusicService :
         
         // Resolve URL if not cached
         return try {
-            resolveSaavnUrl(mediaId)?.let { resolved ->
+            runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
                 database.query { upsert(resolved.formatEntity) }
                 songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
                 return resolved.url

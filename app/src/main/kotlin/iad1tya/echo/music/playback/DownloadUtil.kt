@@ -33,6 +33,7 @@ import iad1tya.echo.music.db.entities.SongEntity
 import iad1tya.echo.music.di.DownloadCache
 import iad1tya.echo.music.di.PlayerCache
 import iad1tya.echo.music.models.toMediaMetadata
+import iad1tya.echo.music.models.toSongEntity
 import iad1tya.echo.music.utils.StreamClientUtils
 import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.YTPlayerUtils
@@ -114,7 +115,7 @@ constructor(
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            resolveSaavnDownload(mediaId)?.let { resolved ->
+            runBlocking(Dispatchers.IO) { resolveSaavnDownload(mediaId) }?.let { resolved ->
                 database.query {
                     upsert(resolved.formatEntity)
 
