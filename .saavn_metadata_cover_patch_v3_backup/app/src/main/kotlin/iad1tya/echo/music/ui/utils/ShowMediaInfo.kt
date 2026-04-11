@@ -32,7 +32,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -75,18 +74,6 @@ fun ShowMediaInfo(videoId: String) {
     var song by remember { mutableStateOf<Song?>(null) }
     var currentFormat by remember { mutableStateOf<FormatEntity?>(null) }
     val playerConnection = LocalPlayerConnection.current
-    val playingMetadata by playerConnection.mediaMetadata.collectAsState()
-
-    val usePlayingMetadata = remember(videoId, playingMetadata, currentFormat) {
-        playingMetadata?.id == videoId && isSaavnFormat(currentFormat)
-    }
-    val displayTitle = if (usePlayingMetadata) playingMetadata?.title ?: song?.title else song?.title
-    val displayThumbnailUrl = if (usePlayingMetadata) playingMetadata?.thumbnailUrl ?: song?.thumbnailUrl else song?.thumbnailUrl
-    val displayArtists = if (usePlayingMetadata && !playingMetadata?.artists.isNullOrEmpty()) {
-        playingMetadata?.artists?.joinToString { it.name }
-    } else {
-        song?.artists?.joinToString { it.name }
-    }
 
     LaunchedEffect(videoId) {
         YouTube.getMediaInfo(videoId).onSuccess { info = it }
@@ -100,9 +87,9 @@ fun ShowMediaInfo(videoId: String) {
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Blurred Background
-        if (!displayThumbnailUrl.isNullOrEmpty()) {
+        if (!song?.thumbnailUrl.isNullOrEmpty()) {
             AsyncImage(
-                model = displayThumbnailUrl,
+                model = song?.thumbnailUrl,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -154,7 +141,7 @@ fun ShowMediaInfo(videoId: String) {
                         modifier = Modifier.size(160.dp)
                     ) {
                         AsyncImage(
-                            model = displayThumbnailUrl,
+                            model = song?.thumbnailUrl,
                             contentDescription = "Album Art",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
@@ -162,7 +149,7 @@ fun ShowMediaInfo(videoId: String) {
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = displayTitle ?: stringResource(R.string.unknown),
+                        text = song?.title ?: stringResource(R.string.unknown),
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
@@ -172,7 +159,7 @@ fun ShowMediaInfo(videoId: String) {
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = displayArtists ?: stringResource(R.string.unknown),
+                        text = song?.artists?.joinToString { it.name } ?: stringResource(R.string.unknown),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.primary,
                         textAlign = TextAlign.Center,
@@ -394,16 +381,4 @@ fun compactNumberFormatter(count: Int): String {
         count < 1000000 -> String.format("%.1fK", count / 1000.0)
         else -> String.format("%.1fM", count / 1000000.0)
     }
-}
-
-
-private fun isSaavnFormat(format: FormatEntity?): Boolean {
-    if (format == null) return false
-    return format.playbackUrl?.startsWith("saavn://") == true || format.itag < 0
-}
-
-private fun describeAudioSource(format: FormatEntity?): String? = when {
-    format == null -> null
-    isSaavnFormat(format) -> "JioSaavn"
-    else -> "YouTube Music"
 }

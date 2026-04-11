@@ -188,7 +188,6 @@ import iad1tya.echo.music.lyrics.LyricsPreloadManager
 import iad1tya.echo.music.models.PersistPlayerState
 import iad1tya.echo.music.models.PersistQueue
 import iad1tya.echo.music.models.toMediaMetadata
-import iad1tya.echo.music.models.toSongEntity
 import iad1tya.echo.music.playback.queues.EmptyQueue
 import iad1tya.echo.music.playback.queues.Queue
 import iad1tya.echo.music.playback.queues.YouTubeQueue
@@ -2668,30 +2667,13 @@ class MusicService :
     }
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
+        if (forcedYoutubeFallbackIds.contains(mediaId)) return null
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
         if (metadata.isVideoSong) return null
-        if (forcedYoutubeFallbackIds.contains(mediaId)) return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
-            AudioQuality.LOW -> 96_000
+            iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
             else -> 320_000
-        }
-        val playbackUrlMarker = "saavn://${resolved.songId}"
-        val saavnMetadata = metadata.copy(
-            title = resolved.matchedTitle.ifBlank { metadata.title },
-            artists = resolved.matchedArtists.takeIf { it.isNotEmpty() }
-                ?.map { iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = it) }
-                ?: metadata.artists,
-            thumbnailUrl = resolved.thumbnailUrl ?: metadata.thumbnailUrl,
-            album = resolved.albumName
-                ?.takeIf { it.isNotBlank() }
-                ?.let { iad1tya.echo.music.models.MediaMetadata.Album(id = metadata.album?.id ?: mediaId, title = it) }
-                ?: metadata.album,
-        )
-        withContext(Dispatchers.Main) {
-            if (currentMediaMetadata.value?.id == mediaId || player.currentMetadata?.id == mediaId) {
-                currentMediaMetadata.value = saavnMetadata
-            }
         }
         return ExternalResolvedUrl(
             url = resolved.url,
@@ -2705,8 +2687,13 @@ class MusicService :
                 sampleRate = resolved.sampleRate,
                 contentLength = 0L,
                 loudnessDb = null,
-                playbackUrl = playbackUrlMarker,
+                playbackUrl = "saavn://${resolved.songId}",
             ),
+            title = resolved.matchedTitle.takeIf { it.isNotBlank() },
+            artists = resolved.matchedArtists,
+            thumbnailUrl = resolved.thumbnailUrl,
+            albumTitle = resolved.albumTitle,
+            durationSeconds = resolved.durationSeconds,
         )
     }
 

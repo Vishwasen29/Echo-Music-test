@@ -2674,7 +2674,7 @@ class MusicService :
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             AudioQuality.LOW -> 96_000
-            else -> 320_000
+            AudioQuality.AUTO, AudioQuality.HIGH -> 320_000
         }
         val playbackUrlMarker = "saavn://${resolved.songId}"
         val saavnMetadata = metadata.copy(
@@ -2688,8 +2688,19 @@ class MusicService :
                 ?.let { iad1tya.echo.music.models.MediaMetadata.Album(id = metadata.album?.id ?: mediaId, title = it) }
                 ?: metadata.album,
         )
+        database.query {
+            val existingSong = getSongByIdBlocking(mediaId)?.song ?: metadata.toSongEntity()
+            upsert(
+                existingSong.copy(
+                    title = saavnMetadata.title,
+                    thumbnailUrl = saavnMetadata.thumbnailUrl ?: existingSong.thumbnailUrl,
+                    albumId = saavnMetadata.album?.id ?: existingSong.albumId,
+                    albumName = saavnMetadata.album?.title ?: existingSong.albumName,
+                )
+            )
+        }
         withContext(Dispatchers.Main) {
-            if (currentMediaMetadata.value?.id == mediaId || player.currentMetadata?.id == mediaId) {
+            if (currentMediaMetadata.value?.id == mediaId) {
                 currentMediaMetadata.value = saavnMetadata
             }
         }

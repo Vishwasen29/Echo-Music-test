@@ -231,45 +231,6 @@ object SaavnAudioResolver {
         )
     }
 
-
-    private fun parseThumbnailUrl(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("image"),
-            json.optString("imageUrl"),
-            json.optString("thumbnail"),
-            json.optString("thumbnailUrl"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return direct.replace("150x150", "500x500")
-
-        val imageObj = json.optJSONObject("image")
-        if (imageObj != null) {
-            val nested = listOf(
-                imageObj.optString("url"),
-                imageObj.optString("link"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-            if (!nested.isNullOrBlank()) return nested.replace("150x150", "500x500")
-        }
-        return null
-    }
-
-    private fun parseAlbumName(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("album"),
-            json.optString("albumName"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return direct
-
-        val albumObj = json.optJSONObject("album")
-        if (albumObj != null) {
-            val nested = listOf(
-                albumObj.optString("name"),
-                albumObj.optString("title"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-            if (!nested.isNullOrBlank()) return nested
-        }
-        return null
-    }
-
     private fun parseArtists(json: JSONObject): List<String> {
         val artists = linkedSetOf<String>()
 
