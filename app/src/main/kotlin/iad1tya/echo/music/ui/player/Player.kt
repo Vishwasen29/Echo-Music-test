@@ -245,7 +245,6 @@ fun BottomSheetPlayer(
     val currentSong by playerConnection.currentSong.collectAsState(initial = null)
     val currentFormat by playerConnection.currentFormat.collectAsState(initial = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
-    val currentFormat by database.format(mediaMetadata?.id).collectAsState(initial = null)
     val automix by playerConnection.service.automixItems.collectAsState()
     val repeatMode by playerConnection.repeatMode.collectAsState()
     val isCrossfading by playerConnection.service.isCrossfading.collectAsState()
@@ -929,29 +928,26 @@ fun BottomSheetPlayer(
                     }
                 }
 
-                    val playerAudioSource = when {
-                        currentFormat == null -> "Source pending"
-                        currentFormat!!.itag < 0 -> "JioSaavn"
+                val format = currentFormat
+                val playerAudioInfo = remember(format) {
+                    val source = when {
+                        format == null -> "Source pending"
+                        format.itag < 0 -> "JioSaavn"
                         else -> "YouTube Music"
                     }
-                    val playerBitrate = currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
-                    val playerAudioInfo = listOfNotNull(
-                        playerAudioSource,
-                        playerBitrate,
-                    ).joinToString(" • ")
+                    val bitrateText = format?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+                    listOfNotNull(source, bitrateText).joinToString(" • ")
+                }
 
-                    Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
 
-                    Text(
-                        text = playerAudioInfo,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = TextBackgroundColor.copy(alpha = 0.85f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .basicMarquee(iterations = 1, initialDelayMillis = 3000, velocity = 30.dp)
-                    )
+                Text(
+                    text = playerAudioInfo,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextBackgroundColor.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
 
                 if (showInlineLyrics) {
                     Box(
