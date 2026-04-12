@@ -305,8 +305,6 @@ class MusicService :
 
     private val forcedYoutubeFallbackIds = mutableSetOf<String>()
 
-    private var currentQueueTotalCount: Int? = null
-
 
 
 
@@ -1308,7 +1306,6 @@ class MusicService :
                     } else status
                 }
             if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@launch
-            currentQueueTotalCount = initialStatus.totalCount ?: initialStatus.items.size
             if (initialStatus.title != null) {
                 queueTitle = initialStatus.title
             }
@@ -1344,7 +1341,6 @@ class MusicService :
 
     fun startRadioSeamlessly() {
         val currentMediaMetadata = player.currentMetadata ?: return
-        currentQueueTotalCount = null
 
         // Save current song
         val currentSong = player.currentMediaItem
@@ -3214,14 +3210,13 @@ class MusicService :
     
 
     // ECHO_PATCH_TRACK_COUNTER_HELPERS
-    fun currentTrackCounterCompact(): String? {
+    private fun currentTrackCounterCompact(): String? {
         val index = player.currentMediaItemIndex
-        val hintedTotal = currentQueueTotalCount ?: 0
-        val total = maxOf(player.mediaItemCount, hintedTotal)
+        val total = player.mediaItemCount
         return if (index >= 0 && total > 0) "${index + 1}/$total" else null
     }
 
-    fun currentTrackCounterLabel(): String? =
+    private fun currentTrackCounterLabel(): String? =
         currentTrackCounterCompact()?.let { "Track $it" }
 
     private fun currentNotificationActionLabel(base: String): String =
@@ -3235,7 +3230,11 @@ class MusicService :
             else -> 0L
         }
         val safePosition = player.currentPosition.coerceAtLeast(0L)
-        val trackCounter = currentTrackCounterCompact()
+        val trackCounter = if (player.mediaItemCount > 0 && player.currentMediaItemIndex >= 0) {
+            "${player.currentMediaItemIndex + 1}/${player.mediaItemCount}"
+        } else {
+            null
+        }
         val artistLine = metadata?.artists?.joinToString(", ") { it.name }
 
         MusicWidgetProvider.updateWidget(

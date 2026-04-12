@@ -934,7 +934,6 @@ fun BottomSheetPlayer(
                     }
                 }
 
-                val trackCounterLabel = playerConnection.service.currentTrackCounterLabel()
                 val playerAudioInfo = currentFormat?.let { format ->
                     val source = if (format.itag < 0) "JioSaavn" else "YouTube Music"
                     val bitrate = format.bitrate.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
@@ -954,7 +953,7 @@ fun BottomSheetPlayer(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = listOfNotNull(playerAudioInfo, trackCounterLabel).joinToString(" • "),
+                    text = playerAudioInfo,
                     style = MaterialTheme.typography.labelLarge,
                     color = TextBackgroundColor.copy(alpha = 0.85f),
                     maxLines = 1,

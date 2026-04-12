@@ -105,7 +105,6 @@ import iad1tya.echo.music.extensions.toMediaItem
 import iad1tya.echo.music.extensions.togglePlayPause
 import iad1tya.echo.music.models.toMediaMetadata
 import iad1tya.echo.music.playback.queues.ListQueue
-import iad1tya.echo.music.playback.queues.PagedPlaylistQueue
 import iad1tya.echo.music.ui.component.AutoResizeText
 import iad1tya.echo.music.ui.component.DraggableScrollbar
 import iad1tya.echo.music.ui.component.FontSizeRange
@@ -163,13 +162,6 @@ fun OnlinePlaylistScreen(
     var query by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue())
     }
-
-
-fun extractPlaylistTotalCount(raw: String?, fallback: Int): Int {
-    if (raw.isNullOrBlank()) return fallback
-    val digits = raw.replace(Regex("[^0-9]"), "")
-    return digits.toIntOrNull()?.coerceAtLeast(fallback) ?: fallback
-}
 
     val filteredSongs =
         remember(songs, query) {
@@ -497,7 +489,6 @@ fun extractPlaylistTotalCount(raw: String?, fallback: Int): Int {
                                                     ListQueue(
                                                         title = playlist.title,
                                                         items = shuffledSongs,
-                                                        totalCount = shuffledSongs.size,
                                                     ),
                                                 )
                                             },
@@ -546,13 +537,9 @@ fun extractPlaylistTotalCount(raw: String?, fallback: Int): Int {
                                     Button(
                                         onClick = {
                                             playerConnection.playQueue(
-                                                PagedPlaylistQueue(
+                                                ListQueue(
                                                     title = playlist.title,
-                                                    playlistId = playlist.id,
-                                                    initialItems = songs.map { it.toMediaItem() },
-                                                    initialContinuation = viewModel.continuation,
-                                                    totalCount = extractPlaylistTotalCount(playlist.songCountText, songs.size),
-                                                    hideVideoSongs = hideVideoSongs,
+                                                    items = songs.map { it.toMediaItem() },
                                                 ),
                                             )
                                         },
@@ -638,24 +625,11 @@ fun extractPlaylistTotalCount(raw: String?, fallback: Int): Int {
                                                     playerConnection.player.togglePlayPause()
                                                 } else {
                                                     playerConnection.playQueue(
-                                                        if (!isSearching && query.text.isEmpty()) {
-                                                            PagedPlaylistQueue(
-                                                                title = playlist.title,
-                                                                playlistId = playlist.id,
-                                                                initialItems = songs.map { it.toMediaItem() },
-                                                                startIndex = song.item.first,
-                                                                initialContinuation = viewModel.continuation,
-                                                                totalCount = extractPlaylistTotalCount(playlist.songCountText, songs.size),
-                                                                hideVideoSongs = hideVideoSongs,
-                                                            )
-                                                        } else {
-                                                            ListQueue(
-                                                                title = playlist.title,
-                                                                items = filteredSongs.map { it.second.toMediaItem() },
-                                                                startIndex = index,
-                                                                totalCount = filteredSongs.size,
-                                                            )
-                                                        }
+                                                        ListQueue(
+                                                            title = playlist.title,
+                                                            items = filteredSongs.map { it.second.toMediaItem() },
+                                                            startIndex = index
+                                                        )
                                                     )
                                                 }
                                             } else {
