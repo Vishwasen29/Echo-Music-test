@@ -107,13 +107,16 @@
                 android:src="@drawable/skip_next"
                 android:tint="@android:color/white" />
         </LinearLayout>
-            <ImageView
-                android:id="@+id/widget_progress_wave"
-                android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:layout_marginTop="8dp"
-                android:contentDescription=""
-                android:scaleType="fitXY"
-                android:src="@drawable/widget_background" />
+
+        <ProgressBar
+            android:id="@+id/widget_progress"
+            style="?android:attr/progressBarStyleHorizontal"
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:layout_alignParentBottom="true"
+            android:indeterminate="false"
+            android:max="1000"
+            android:progress="0"
+            android:progressDrawable="@drawable/widget_progress_drawable" />
     </RelativeLayout>
 </RelativeLayout>

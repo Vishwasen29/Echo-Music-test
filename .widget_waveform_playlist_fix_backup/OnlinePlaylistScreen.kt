@@ -97,7 +97,6 @@ import iad1tya.echo.music.LocalPlayerConnection
 import iad1tya.echo.music.R
 import iad1tya.echo.music.constants.AlbumThumbnailSize
 import iad1tya.echo.music.constants.HideExplicitKey
-import iad1tya.echo.music.constants.HideVideoSongsKey
 import iad1tya.echo.music.constants.ThumbnailCornerRadius
 import iad1tya.echo.music.db.entities.PlaylistEntity
 import iad1tya.echo.music.db.entities.PlaylistSongMap
@@ -154,7 +153,6 @@ fun OnlinePlaylistScreen(
         mutableStateOf(false)
     }
     val hideExplicit by rememberPreference(key = HideExplicitKey, defaultValue = false)
-    val hideVideoSongs by rememberPreference(key = HideVideoSongsKey, defaultValue = false)
 
     val lazyListState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()

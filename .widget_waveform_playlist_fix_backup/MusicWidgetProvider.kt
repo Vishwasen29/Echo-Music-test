@@ -71,7 +71,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
 
             for (appWidgetId in appWidgetIds) {
                 val views = RemoteViews(context.packageName, R.layout.widget_music_player)
-                applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
+                views.setProgressBar(R.id.widget_progress, 1000, progress.coerceIn(0, 1000), false)
                 views.setImageViewResource(
                     R.id.widget_play_pause,
                     if (isPlaying) R.drawable.pause else R.drawable.play,
@@ -166,7 +166,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
         val safeDuration = durationMs.coerceAtLeast(0L)
         val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else 0L)
         val progress = if (safeDuration > 0L) ((safePosition * 1000L) / safeDuration).toInt() else 0
-        applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
+        views.setProgressBar(R.id.widget_progress, 1000, progress.coerceIn(0, 1000), false)
 
         views.setOnClickPendingIntent(
             R.id.widget_play_pause,

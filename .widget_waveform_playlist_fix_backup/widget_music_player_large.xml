@@ -90,14 +90,17 @@
                     android:textStyle="bold"
                     android:visibility="gone" />
             </LinearLayout>
-            <ImageView
-                android:id="@+id/widget_progress_wave"
+
+            <ProgressBar
+                android:id="@+id/widget_progress"
+                style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
-                android:layout_height="18dp"
-                android:layout_marginTop="8dp"
-                android:contentDescription=""
-                android:scaleType="fitXY"
-                android:src="@drawable/widget_background" />
+                android:layout_height="3dp"
+                android:layout_marginTop="10dp"
+                android:indeterminate="false"
+                android:max="1000"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_drawable" />
 
             <LinearLayout
                 android:id="@+id/widget_controls"
