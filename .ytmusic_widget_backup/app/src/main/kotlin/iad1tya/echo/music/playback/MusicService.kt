@@ -399,8 +399,6 @@ class MusicService :
     private var discordRpc: DiscordRPC? = null
     private var discordUpdateJob: Job? = null
 
-    private var widgetProgressJob: Job? = null
-
     // Last.fm scrobbling
     private var scrobbleManager: ScrobbleManager? = null
 
@@ -450,18 +448,6 @@ class MusicService :
                     player.seekToNext()
                 }
                 ACTION_PREVIOUS -> if (player.hasPreviousMediaItem()) player.seekToPrevious()
-                ACTION_TOGGLE_SHUFFLE -> {
-                    player.shuffleModeEnabled = !player.shuffleModeEnabled
-                    updateWidget()
-                }
-                ACTION_TOGGLE_REPEAT -> {
-                    player.repeatMode = when (player.repeatMode) {
-                        REPEAT_MODE_OFF -> REPEAT_MODE_ALL
-                        REPEAT_MODE_ALL -> REPEAT_MODE_ONE
-                        else -> REPEAT_MODE_OFF
-                    }
-                    updateWidget()
-                }
             }
         }
 
@@ -992,16 +978,6 @@ class MusicService :
                 if (dataStore.get(PersistentQueueKey, true) && player.isPlaying) {
                     saveQueueToDisk()
                 }
-            }
-        }
-
-        widgetProgressJob?.cancel()
-        widgetProgressJob = scope.launch {
-            while (isActive) {
-                if (::player.isInitialized && player.currentMediaItem != null) {
-                    updateWidget()
-                }
-                delay(if (player.isPlaying) 1000L else 2500L)
             }
         }
         } catch (e: Exception) {
@@ -3054,7 +3030,6 @@ class MusicService :
         }
         discordRpc = null
         discordUpdateJob?.cancel()
-        widgetProgressJob?.cancel()
         
         connectivityObserver.unregister()
         lyricsPreloadManager?.destroy()
@@ -3191,22 +3166,12 @@ class MusicService :
     
     private fun updateWidget() {
         val metadata = player.currentMetadata
-        val safeDuration = when {
-            player.duration > 0L && player.duration != C.TIME_UNSET -> player.duration
-            metadata?.duration != null && metadata.duration > 0L -> metadata.duration * 1000L
-            else -> 0L
-        }
-        val safePosition = player.currentPosition.coerceAtLeast(0L)
         MusicWidgetProvider.updateWidget(
             context = this,
             songTitle = metadata?.title,
             artistName = metadata?.artists?.joinToString(", ") { it.name },
             albumArtUrl = metadata?.thumbnailUrl,
-            isPlaying = player.isPlaying,
-            positionMs = safePosition,
-            durationMs = safeDuration,
-            repeatMode = player.repeatMode,
-            shuffleEnabled = player.shuffleModeEnabled,
+            isPlaying = player.isPlaying
         )
     }
 
