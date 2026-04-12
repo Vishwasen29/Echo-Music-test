@@ -204,7 +204,6 @@ import iad1tya.echo.music.utils.enumPreference
 import iad1tya.echo.music.utils.get
 import iad1tya.echo.music.utils.reportException
 import iad1tya.echo.music.widget.MusicWidgetProvider
-import iad1tya.echo.music.widget.ScalableMusicWidgetProvider
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -1000,25 +999,7 @@ class MusicService :
         widgetProgressJob = scope.launch {
             while (isActive) {
                 if (::player.isInitialized && player.currentMediaItem != null) {
-                    val metadata = player.currentMetadata
-                    val safeDuration = when {
-                        player.duration > 0L && player.duration != C.TIME_UNSET -> player.duration
-                        metadata?.duration != null && metadata.duration > 0L -> metadata.duration * 1000L
-                        else -> 0L
-                    }
-                    val safePosition = player.currentPosition.coerceAtLeast(0L)
-                    MusicWidgetProvider.updateProgress(
-                        context = this@MusicService,
-                        positionMs = safePosition,
-                        durationMs = safeDuration,
-                        isPlaying = player.isPlaying,
-                    )
-                    ScalableMusicWidgetProvider.updateProgress(
-                        context = this@MusicService,
-                        positionMs = safePosition,
-                        durationMs = safeDuration,
-                        isPlaying = player.isPlaying,
-                    )
+                    updateWidget()
                 }
                 delay(if (player.isPlaying) 1000L else 2500L)
             }
@@ -3230,37 +3211,19 @@ class MusicService :
             else -> 0L
         }
         val safePosition = player.currentPosition.coerceAtLeast(0L)
-        val trackCounter = if (player.mediaItemCount > 0 && player.currentMediaItemIndex >= 0) {
-            "${player.currentMediaItemIndex + 1}/${player.mediaItemCount}"
-        } else {
-            null
-        }
-        val artistLine = metadata?.artists?.joinToString(", ") { it.name }
-
         MusicWidgetProvider.updateWidget(
             context = this,
             songTitle = metadata?.title,
-            artistName = artistLine,
-            albumArtUrl = metadata?.thumbnailUrl,
-            isPlaying = player.isPlaying,
-            positionMs = safePosition,
-            durationMs = safeDuration,
-            trackCounter = trackCounter,
-        )
-        ScalableMusicWidgetProvider.updateWidget(
-            context = this,
-            songTitle = metadata?.title,
-            artistName = artistLine,
+            artistName = metadata?.artists?.joinToString(", ") { it.name },
             albumArtUrl = metadata?.thumbnailUrl,
             isPlaying = player.isPlaying,
             positionMs = safePosition,
             durationMs = safeDuration,
             repeatMode = player.repeatMode,
             shuffleEnabled = player.shuffleModeEnabled,
-            trackCounter = trackCounter,
+            trackCounter = currentTrackCounterCompact(),
         )
     }
-
 
     inner class MusicBinder : Binder() {
         val service: MusicService
