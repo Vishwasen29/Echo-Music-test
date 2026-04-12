@@ -829,7 +829,6 @@ fun BottomSheetPlayer(
                             color = TextBackgroundColor,
                             modifier =
                             Modifier
-                                .fillMaxWidth()
                                 .basicMarquee(iterations = 1, initialDelayMillis = 3000, velocity = 30.dp)
                                 .combinedClickable(
                                     enabled = true,
@@ -935,27 +934,43 @@ fun BottomSheetPlayer(
                     }
                 }
 
-                    Spacer(Modifier.height(8.dp))
+                val trackCounterLabel = playerConnection.service.currentTrackCounterLabel()
+                val playerAudioInfo = currentFormat?.let { format ->
+                    val source = if (format.itag < 0) "JioSaavn" else "YouTube Music"
+                    val bitrate = format.bitrate.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+                    listOfNotNull(source, bitrate).joinToString(" • ")
+                } ?: "Source pending"
 
-                    val playerAudioInfo = currentFormat?.let { format ->
-                        val source = if (format.itag < 0) "JioSaavn" else "YouTube Music"
-                        val bitrate = format.bitrate.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
-                        listOfNotNull(source, bitrate).joinToString(" • ")
-                    } ?: "Source pending"
+                val trackCounterText = run {
+                    val currentIndex = playerConnection.player.currentMediaItemIndex
+                    val totalItems = playerConnection.player.mediaItemCount
+                    if (currentIndex >= 0 && totalItems > 0) {
+                        "Track ${currentIndex + 1} of $totalItems"
+                    } else {
+                        null
+                    }
+                }
 
-                    val trackCounterText = playerConnection.service.currentTrackCounterLabel()
-                        ?.replace("/", " of ")
+                Spacer(modifier = Modifier.height(8.dp))
 
+                Text(
+                    text = listOfNotNull(playerAudioInfo, trackCounterLabel).joinToString(" • "),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextBackgroundColor.copy(alpha = 0.85f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+
+                trackCounterText?.let { counterText ->
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = listOfNotNull(playerAudioInfo, trackCounterText).joinToString(" • "),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = TextBackgroundColor.copy(alpha = 0.85f),
+                        text = counterText,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextBackgroundColor.copy(alpha = 0.72f),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 12.dp),
                     )
+                }
 
                 if (showInlineLyrics) {
                     Box(

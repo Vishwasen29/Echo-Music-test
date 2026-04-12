@@ -34,65 +34,43 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             width: Int,
             height: Int,
             progress: Float,
-            playedColor: Int,
-            trackColor: Int,
-            knobColor: Int,
+            filledColor: Int,
+            emptyColor: Int,
+            bars: Int = 28,
         ): Bitmap {
-            val safeWidth = width.coerceAtLeast(160)
-            val safeHeight = height.coerceAtLeast(24)
-            val bitmap = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
+            val safeWidth = width.coerceAtLeast(120)
+            val safeHeight = height.coerceAtLeast(16)
+            val bmp = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bmp)
+            val filledPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = filledColor }
+            val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = emptyColor }
 
-            val left = safeHeight * 0.65f
-            val right = safeWidth - safeHeight * 0.65f
-            val centerY = safeHeight * 0.58f
             val clamped = progress.coerceIn(0f, 1f)
-            val playedX = left + (right - left) * clamped
+            val gap = (safeWidth * 0.008f).coerceAtLeast(2f)
+            val totalGap = gap * (bars - 1)
+            val barWidth = ((safeWidth - totalGap) / bars.toFloat()).coerceAtLeast(4f)
+            val filledBars = clamped * bars
 
-            val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = trackColor
-                style = Paint.Style.STROKE
-                strokeWidth = safeHeight * 0.16f
-                strokeCap = Paint.Cap.ROUND
-            }
-            canvas.drawLine(left, centerY, right, centerY, trackPaint)
-
-            val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = playedColor
-                style = Paint.Style.STROKE
-                strokeWidth = safeHeight * 0.16f
-                strokeCap = Paint.Cap.ROUND
-                strokeJoin = Paint.Join.ROUND
-            }
-
-            val waveWidth = (playedX - left).coerceAtLeast(0f)
-            if (waveWidth > 4f) {
-                val path = android.graphics.Path()
-                val amplitude = safeHeight * 0.12f
-                val cycles = kotlin.math.max(1, (waveWidth / (safeHeight * 1.9f)).toInt())
-                val steps = kotlin.math.max(18, cycles * 28)
-                path.moveTo(left, centerY)
-                for (step in 1..steps) {
-                    val t = step / steps.toFloat()
-                    val x = left + waveWidth * t
-                    val y = centerY + kotlin.math.sin(t * cycles * 2.0 * kotlin.math.PI).toFloat() * amplitude
-                    path.lineTo(x, y)
+            for (i in 0 until bars) {
+                val left = i * (barWidth + gap)
+                val right = left + barWidth
+                val normalized = if (bars <= 1) 1f else i / (bars - 1f)
+                val edgeBoost = kotlin.math.abs(0.5f - normalized) * 1.2f
+                val base = (0.22f + edgeBoost).coerceAtMost(0.78f)
+                val dynamic = when (i % 4) {
+                    0 -> 0.95f
+                    1 -> 0.60f
+                    2 -> 0.82f
+                    else -> 0.48f
                 }
-                canvas.drawPath(path, wavePaint)
+                val barHeight = (safeHeight * (0.35f + base * dynamic)).coerceAtLeast(safeHeight * 0.32f)
+                val top = (safeHeight - barHeight) / 2f
+                val rect = RectF(left, top, right, top + barHeight)
+                val paint = if (i + 1 <= filledBars) filledPaint else emptyPaint
+                val radius = (barWidth / 2f).coerceAtMost(12f)
+                canvas.drawRoundRect(rect, radius, radius, paint)
             }
-
-            val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = knobColor
-                style = Paint.Style.FILL
-            }
-            canvas.drawCircle(
-                playedX.coerceIn(left, right),
-                centerY,
-                safeHeight * 0.23f,
-                knobPaint,
-            )
-
-            return bitmap
+            return bmp
         }
 
         private fun applyWaveformProgress(
@@ -100,22 +78,19 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             progress: Int,
             isPlaying: Boolean,
         ) {
-            val played = ACTIVE_ICON
-            val track = if (isPlaying) 0x66FFFFFF else 0x40FFFFFF
-            val knob = ACTIVE_ICON
+            val filled = ACTIVE_ICON
+            val empty = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
             views.setImageViewBitmap(
                 R.id.widget_progress_wave,
                 createWaveformProgressBitmap(
-                    width = 900,
-                    height = 44,
+                    width = 720,
+                    height = 36,
                     progress = progress / 1000f,
-                    playedColor = played,
-                    trackColor = track,
-                    knobColor = knob,
+                    filledColor = filled,
+                    emptyColor = empty,
                 ),
             )
         }
-
 
         private const val DEFAULT_BG = 0xFF111111.toInt()
         private const val INACTIVE_ICON = 0x88FFFFFF.toInt()
