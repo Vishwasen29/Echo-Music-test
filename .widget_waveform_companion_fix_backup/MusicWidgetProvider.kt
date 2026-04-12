@@ -27,69 +27,6 @@ import java.net.URL
 class MusicWidgetProvider : AppWidgetProvider() {
 
     companion object {
-
-        private fun createWaveformProgressBitmap(
-            width: Int,
-            height: Int,
-            progress: Float,
-            filledColor: Int,
-            emptyColor: Int,
-            bars: Int = 28,
-        ): Bitmap {
-            val safeWidth = width.coerceAtLeast(120)
-            val safeHeight = height.coerceAtLeast(16)
-            val bmp = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bmp)
-            val filledPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = filledColor }
-            val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = emptyColor }
-
-            val clamped = progress.coerceIn(0f, 1f)
-            val gap = (safeWidth * 0.008f).coerceAtLeast(2f)
-            val totalGap = gap * (bars - 1)
-            val barWidth = ((safeWidth - totalGap) / bars.toFloat()).coerceAtLeast(4f)
-            val filledBars = clamped * bars
-
-            for (i in 0 until bars) {
-                val left = i * (barWidth + gap)
-                val right = left + barWidth
-                val normalized = if (bars <= 1) 1f else i / (bars - 1f)
-                val edgeBoost = kotlin.math.abs(0.5f - normalized) * 1.2f
-                val base = (0.22f + edgeBoost).coerceAtMost(0.78f)
-                val dynamic = when (i % 4) {
-                    0 -> 0.95f
-                    1 -> 0.60f
-                    2 -> 0.82f
-                    else -> 0.48f
-                }
-                val barHeight = (safeHeight * (0.35f + base * dynamic)).coerceAtLeast(safeHeight * 0.32f)
-                val top = (safeHeight - barHeight) / 2f
-                val rect = RectF(left, top, right, top + barHeight)
-                val paint = if (i + 1 <= filledBars) filledPaint else emptyPaint
-                val radius = (barWidth / 2f).coerceAtMost(12f)
-                canvas.drawRoundRect(rect, radius, radius, paint)
-            }
-            return bmp
-        }
-
-        private fun applyWaveformProgress(
-            views: RemoteViews,
-            progress: Int,
-            isPlaying: Boolean,
-        ) {
-            val filled = 0xFFFFFFFF.toInt()
-            val empty = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
-            views.setImageViewBitmap(
-                R.id.widget_progress_wave,
-                createWaveformProgressBitmap(
-                    width = 720,
-                    height = 36,
-                    progress = progress / 1000f,
-                    filledColor = filled,
-                    emptyColor = empty,
-                ),
-            )
-        }
-
         fun updateWidget(
             context: Context,
             songTitle: String?,
