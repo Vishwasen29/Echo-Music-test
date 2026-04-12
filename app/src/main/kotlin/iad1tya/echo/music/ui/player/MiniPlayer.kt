@@ -441,13 +441,6 @@ private fun NewMiniPlayer(
 
 @Composable
 private fun LegacyMiniPlayer(
-            }
-        }
-    }
-}
-
-@Composable
-private fun LegacyMiniPlayer(
     position: Long,
     duration: Long,
     modifier: Modifier = Modifier,
