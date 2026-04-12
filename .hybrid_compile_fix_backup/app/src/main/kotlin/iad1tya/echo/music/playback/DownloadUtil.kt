@@ -219,7 +219,7 @@ constructor(
             val mergedSong = if (existingSong != null) {
                 existingSong.copy(
                     title = resolved.title?.takeIf { it.isNotBlank() } ?: existingSong.title,
-                    duration = existingSong.duration.takeIf { it > 0 } ?: (resolved.duration ?: existingSong.duration),
+                    duration = existingSong.duration.takeIf { it > 0 } ?: (resolved.durationSeconds ?: existingSong.duration),
                     thumbnailUrl = resolved.thumbnailUrl ?: existingSong.thumbnailUrl,
                     albumName = resolved.albumTitle ?: existingSong.albumName,
                     dateDownload = existingSong.dateDownload ?: now,
@@ -228,7 +228,7 @@ constructor(
                 SongEntity(
                     id = mediaId,
                     title = resolved.title?.takeIf { it.isNotBlank() } ?: mediaId,
-                    duration = resolved.duration ?: 0,
+                    duration = resolved.durationSeconds ?: 0,
                     thumbnailUrl = resolved.thumbnailUrl,
                     albumName = resolved.albumTitle,
                     dateDownload = now,
@@ -258,10 +258,11 @@ constructor(
 
     private suspend fun resolveSaavnDownload(mediaId: String): ExternalResolvedUrl? {
         val metadata = database.song(mediaId).first()?.toMediaMetadata() ?: return null
+        if (metadata.isVideoSong) return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             AudioQuality.LOW -> 96_000
-            AudioQuality.AUTO, AudioQuality.HIGH -> 320_000
+            else -> 320_000
         }
         return ExternalResolvedUrl(
             url = resolved.url,
@@ -276,8 +277,13 @@ constructor(
                 sampleRate = resolved.sampleRate,
                 contentLength = 0L,
                 loudnessDb = null,
-                playbackUrl = null,
+                playbackUrl = "saavn://${resolved.songId}",
             ),
+            title = resolved.matchedTitle.takeIf { it.isNotBlank() },
+            artists = resolved.matchedArtists,
+            thumbnailUrl = resolved.thumbnailUrl,
+            albumTitle = resolved.albumTitle,
+            durationSeconds = resolved.durationSeconds,
         )
     }
 
