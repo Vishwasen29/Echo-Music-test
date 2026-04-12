@@ -8,8 +8,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.URLDecoder
 import java.net.URLEncoder
+import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -38,6 +38,27 @@ object SaavnAudioResolver {
         "/songs/%s",
     )
 
+    private enum class ScriptFamily {
+        LATIN,
+        DEVANAGARI,
+        ARABIC,
+        CYRILLIC,
+        BENGALI,
+        GURMUKHI,
+        GUJARATI,
+        ORIYA,
+        TAMIL,
+        TELUGU,
+        KANNADA,
+        MALAYALAM,
+        THAI,
+        HEBREW,
+        HANGUL,
+        CJK,
+        KANA,
+        UNKNOWN,
+    }
+
     data class ResolvedStream(
         val url: String,
         val bitrate: Int?,
@@ -47,9 +68,6 @@ object SaavnAudioResolver {
         val songId: String,
         val matchedTitle: String,
         val matchedArtists: List<String>,
-        val thumbnailUrl: String?,
-        val albumTitle: String?,
-        val durationSeconds: Int?,
     )
 
     private data class DownloadLink(
@@ -63,9 +81,9 @@ object SaavnAudioResolver {
         val title: String,
         val artists: List<String>,
         val duration: Int?,
+        val language: String?,
+        val albumName: String?,
         val downloadLinks: List<DownloadLink>,
-        val thumbnailUrl: String?,
-        val albumTitle: String?,
     )
 
     suspend fun resolve(
@@ -73,19 +91,25 @@ object SaavnAudioResolver {
         audioQuality: AudioQuality,
     ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
         runCatching {
-            val query = buildQuery(mediaMetadata)
-            val candidates = search(query)
-            if (candidates.isEmpty()) return@runCatching null
+            val queryVariants = buildQueries(mediaMetadata)
+            val allCandidates = linkedMapOf<String, Candidate>()
+            queryVariants.forEach { query ->
+                search(query).forEach { candidate ->
+                    allCandidates.putIfAbsent(candidate.id, candidate)
+                }
+            }
+            if (allCandidates.isEmpty()) return@runCatching null
 
-            val best = candidates
+            val ranked = allCandidates.values
                 .map { candidate -> candidate to score(candidate, mediaMetadata) }
-                .sortedByDescending { it.second }
-                .firstOrNull()
-                ?.takeIf { it.second >= 45 }
-                ?.first
-                ?: return@runCatching null
+                .sortedWith(
+                    compareByDescending<Pair<Candidate, Int>> { it.second }
+                        .thenByDescending { qualityScore(it.first.downloadLinks) }
+                )
 
-            val hydrated = if (best.downloadLinks.isNotEmpty() && best.thumbnailUrl != null) {
+            val best = ranked.firstOrNull()?.takeIf { it.second >= 75 }?.first ?: return@runCatching null
+
+            val hydrated = if (best.downloadLinks.isNotEmpty()) {
                 best
             } else {
                 fetchSong(best.id) ?: best
@@ -101,26 +125,29 @@ object SaavnAudioResolver {
                 songId = hydrated.id,
                 matchedTitle = hydrated.title,
                 matchedArtists = hydrated.artists,
-                thumbnailUrl = hydrated.thumbnailUrl,
-                albumTitle = hydrated.albumTitle,
-                durationSeconds = hydrated.duration,
             )
         }
     }
 
-    private fun buildQuery(mediaMetadata: MediaMetadata): String {
-        val artists = mediaMetadata.artists.take(2).joinToString(" ") { it.name }
-        return listOf(mediaMetadata.title, artists)
-            .filter { it.isNotBlank() }
-            .joinToString(" ")
-            .trim()
+    private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
+        val title = mediaMetadata.title.trim()
+        val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
+        val allArtists = mediaMetadata.artists.take(2).joinToString(" ") { it.name.trim() }
+        val album = mediaMetadata.album?.title?.trim().orEmpty()
+
+        return linkedSetOf(
+            listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, allArtists).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            title,
+        ).filter { it.isNotBlank() }
     }
 
     private fun search(query: String): List<Candidate> {
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
         val paramVariants = listOf(
-            "query=$encoded&limit=10",
-            "q=$encoded&limit=10",
+            "query=$encoded&limit=12",
+            "q=$encoded&limit=12",
             "query=$encoded",
             "q=$encoded",
         )
@@ -131,7 +158,6 @@ object SaavnAudioResolver {
                     val url = base.trimEnd('/') + path + "?" + params
                     val json = fetchJson(url) ?: continue
                     parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                    if (all.isNotEmpty()) return all.values.toList()
                 }
             }
         }
@@ -217,57 +243,24 @@ object SaavnAudioResolver {
             else -> null
         }
 
-        val artists = parseArtists(json)
-        val downloadLinks = parseDownloadLinks(json)
+        val albumName = json.optJSONObject("album")
+            ?.optString("name")
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+        val language = json.optString("language")
+            .trim()
+            .takeIf { it.isNotBlank() }
 
         return Candidate(
             id = id,
             title = title,
-            artists = artists,
+            artists = parseArtists(json),
             duration = duration,
-            downloadLinks = downloadLinks,
-            thumbnailUrl = parseThumbnail(json),
-            albumTitle = parseAlbumTitle(json),
+            language = language,
+            albumName = albumName,
+            downloadLinks = parseDownloadLinks(json),
         )
-    }
-
-
-    private fun parseThumbnailUrl(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("image"),
-            json.optString("imageUrl"),
-            json.optString("thumbnail"),
-            json.optString("thumbnailUrl"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return direct.replace("150x150", "500x500")
-
-        val imageObj = json.optJSONObject("image")
-        if (imageObj != null) {
-            val nested = listOf(
-                imageObj.optString("url"),
-                imageObj.optString("link"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-            if (!nested.isNullOrBlank()) return nested.replace("150x150", "500x500")
-        }
-        return null
-    }
-
-    private fun parseAlbumName(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("album"),
-            json.optString("albumName"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return direct
-
-        val albumObj = json.optJSONObject("album")
-        if (albumObj != null) {
-            val nested = listOf(
-                albumObj.optString("name"),
-                albumObj.optString("title"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-            if (!nested.isNullOrBlank()) return nested
-        }
-        return null
     }
 
     private fun parseArtists(json: JSONObject): List<String> {
@@ -280,112 +273,44 @@ object SaavnAudioResolver {
                 for (index in 0 until array.length()) {
                     val artist = array.optJSONObject(index) ?: continue
                     val name = artist.optString("name").trim()
-                    if (name.isNotBlank()) artists += decodeMaybe(name)
+                    if (name.isNotBlank()) artists += name
                 }
             }
         }
 
         listOf(
             json.optString("primaryArtists"),
-            json.optString("primary_artists"),
+            json.optString("singers"),
+            json.optString("artistMap"),
+            json.optString("artists").takeIf { json.opt("artists") is String } ?: "",
         ).forEach { raw ->
-            raw.split(',')
-                .map { decodeMaybe(it.trim()) }
-                .filter { it.isNotBlank() }
-                .forEach { artists += it }
-        }
-
-        val artistMap = json.optJSONObject("artistMap")
-        if (artistMap != null) {
-            val keys = artistMap.keys()
-            while (keys.hasNext()) {
-                val name = decodeMaybe(keys.next().trim())
-                if (name.isNotBlank()) artists += name
-            }
+            raw.split(',', '&').map { it.trim() }.filter { it.isNotBlank() }.forEach { artists += it }
         }
 
         return artists.toList()
     }
 
-    private fun parseThumbnail(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("image"),
-            json.optString("thumbnail"),
-            json.optString("thumbnailUrl"),
-        ).firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return upgradeImageUrl(decodeMaybe(direct))
-
-        val imageObject = json.optJSONObject("image")
-        if (imageObject != null) {
-            listOf(
-                imageObject.optString("url"),
-                imageObject.optString("link"),
-            ).firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(decodeMaybe(it)) }
-        }
-
-        val imageArray = json.optJSONArray("image")
-        if (imageArray != null) {
-            for (index in imageArray.length() - 1 downTo 0) {
-                val item = imageArray.optJSONObject(index) ?: continue
-                val url = item.optString("url").trim()
-                if (url.isNotBlank()) return upgradeImageUrl(decodeMaybe(url))
-            }
-        }
-
-        return null
-    }
-
-    private fun parseAlbumTitle(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("album"),
-            json.optString("album_name"),
-            json.optString("albumTitle"),
-        ).map(::decodeMaybe).firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return direct
-
-        val albumObject = json.optJSONObject("album")
-        if (albumObject != null) {
-            listOf(
-                albumObject.optString("name"),
-                albumObject.optString("title"),
-            ).map(::decodeMaybe).firstOrNull { it.isNotBlank() }?.let { return it }
-        }
-
-        return null
-    }
-
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
-        val links = mutableListOf<DownloadLink>()
-        val rawArray = json.optJSONArray("downloadUrl")
-        if (rawArray != null) {
-            for (index in 0 until rawArray.length()) {
-                val item = rawArray.optJSONObject(index) ?: continue
-                val quality = item.optString("quality").trim()
+        val list = mutableListOf<DownloadLink>()
+        val arrays = listOf(
+            json.optJSONArray("downloadUrl"),
+            json.optJSONArray("download_url"),
+        )
+        arrays.forEach { array ->
+            if (array == null) return@forEach
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
                 val url = item.optString("url").trim()
                 if (url.isBlank()) continue
-                links += DownloadLink(quality = quality, url = decodeMaybe(url), bitrate = parseBitrate(quality))
+                val quality = item.optString("quality").ifBlank { item.optString("bitrate") }.trim()
+                list += DownloadLink(
+                    quality = quality,
+                    url = url,
+                    bitrate = parseBitrate(quality),
+                )
             }
         }
-
-        val fallbackVlink = decodeMaybe(json.optString("vlink").trim())
-        if (links.isEmpty() && fallbackVlink.isNotBlank()) {
-            links += DownloadLink(
-                quality = "96kbps",
-                url = fallbackVlink,
-                bitrate = 96_000,
-            )
-        }
-
-        val preview = decodeMaybe(json.optString("media_preview_url").trim())
-        if (links.isEmpty() && preview.isNotBlank()) {
-            links += DownloadLink(
-                quality = "preview",
-                url = preview,
-                bitrate = 96_000,
-            )
-        }
-
-        return links.distinctBy { it.url }
+        return list.distinctBy { it.url }
     }
 
     private fun pickDownloadLink(
@@ -395,110 +320,251 @@ object SaavnAudioResolver {
         if (links.isEmpty()) return null
         val sorted = links.sortedBy { it.bitrate }
         return when (audioQuality) {
-            AudioQuality.LOW -> sorted.firstOrNull()
-            AudioQuality.AUTO,
-            AudioQuality.HIGH,
-            -> sorted.lastOrNull()
+            AudioQuality.LOW -> sorted.firstOrNull { it.bitrate in 1..160000 } ?: sorted.first()
+            AudioQuality.AUTO, AudioQuality.HIGH -> sorted.last()
         }
     }
 
-    private fun score(
-        candidate: Candidate,
-        requested: MediaMetadata,
-    ): Int {
-        val requestedTitle = normalizeTitle(requested.title)
-        val candidateTitle = normalizeTitle(candidate.title)
-        val requestedArtists = requested.artists.map { normalizeTitle(it.name) }.filter { it.isNotBlank() }
-        val candidateArtists = candidate.artists.map(::normalizeTitle).filter { it.isNotBlank() }
+    private fun qualityScore(links: List<DownloadLink>): Int = links.maxOfOrNull { it.bitrate } ?: 0
+
+    private fun score(candidate: Candidate, requested: MediaMetadata): Int {
+        val requestedTitleRaw = requested.title.trim()
+        val candidateTitleRaw = candidate.title.trim()
+        val requestedTitle = normalizeTitleCore(requestedTitleRaw)
+        val candidateTitle = normalizeTitleCore(candidateTitleRaw)
+        val requestedArtists = requested.artists.map { normalizeArtist(it.name) }.filter { it.isNotBlank() }
+        val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
+        val requestedAlbum = normalizeTitleCore(requested.album?.title.orEmpty())
+        val candidateAlbum = normalizeTitleCore(candidate.albumName.orEmpty())
+        val requestedPrimaryArtist = requestedArtists.firstOrNull().orEmpty()
+        val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
 
         var score = 0
+
         when {
-            candidateTitle == requestedTitle -> score += 75
-            candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle) -> score += 55
-            else -> score += similarityScore(candidateTitle, requestedTitle)
+            candidateTitle == requestedTitle -> score += 120
+            candidateTitleRaw.equals(requestedTitleRaw, ignoreCase = true) -> score += 110
+            candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle) -> score += 90
+            else -> score += tokenSimilarity(candidateTitle, requestedTitle)
         }
 
-        val matchingArtists = requestedArtists.count { wanted ->
-            candidateArtists.any { found -> found == wanted || found.contains(wanted) || wanted.contains(found) }
+        if (requestedPrimaryArtist.isNotBlank()) {
+            score += when {
+                candidatePrimaryArtist == requestedPrimaryArtist -> 60
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 38
+                candidateArtists.isNotEmpty() -> -45
+                else -> 0
+            }
         }
-        score += matchingArtists * 18
+
+        val secondaryMatches = requestedArtists.drop(1).count { wanted ->
+            candidateArtists.any { found -> artistNamesMatch(found, wanted) }
+        }
+        score += secondaryMatches * 18
+
+        if (requestedAlbum.isNotBlank() && candidateAlbum.isNotBlank()) {
+            score += when {
+                requestedAlbum == candidateAlbum -> 22
+                candidateAlbum.contains(requestedAlbum) || requestedAlbum.contains(candidateAlbum) -> 12
+                else -> 0
+            }
+        }
 
         if (requested.duration > 0 && candidate.duration != null && candidate.duration > 0) {
             val difference = abs(candidate.duration - requested.duration)
             score += when {
                 difference <= 2 -> 25
-                difference <= 6 -> 18
-                difference <= 12 -> 10
-                difference <= 20 -> 0
+                difference <= 5 -> 18
+                difference <= 10 -> 10
+                difference <= 18 -> 0
                 else -> -20
             }
         }
 
-        if (containsPenaltyTerms(candidate.title)) score -= 35
-        if (candidate.downloadLinks.isNotEmpty()) score += 8
-        if (!candidate.thumbnailUrl.isNullOrBlank()) score += 4
+        val requestedTitleScript = dominantScript(requested.title)
+        val candidateTitleScript = dominantScript(candidate.title)
+        if (requestedTitleScript != ScriptFamily.UNKNOWN && candidateTitleScript != ScriptFamily.UNKNOWN) {
+            score += if (requestedTitleScript == candidateTitleScript) 12 else -70
+        }
+
+        if (requestedPrimaryArtist.isNotBlank()) {
+            val requestedArtistScript = dominantScript(requested.artists.firstOrNull()?.name.orEmpty())
+            val candidateArtistScript = dominantScript(candidate.artists.firstOrNull().orEmpty())
+            if (requestedArtistScript != ScriptFamily.UNKNOWN && candidateArtistScript != ScriptFamily.UNKNOWN) {
+                score += if (requestedArtistScript == candidateArtistScript) 8 else -45
+            }
+        }
+
+        score += languageHintScore(candidate, requestedTitleScript)
+
+        score += penaltyScore(candidate, requestedTitle)
+
+        if (candidate.downloadLinks.isNotEmpty()) score += 6
 
         return score
     }
 
-    private fun similarityScore(left: String, right: String): Int {
+    private fun languageHintScore(candidate: Candidate, requestedTitleScript: ScriptFamily): Int {
+        val normalizedLanguage = normalizeLanguage(candidate.language.orEmpty())
+        if (normalizedLanguage.isBlank()) return 0
+        return when (requestedTitleScript) {
+            ScriptFamily.LATIN -> if (normalizedLanguage == "english") 6 else -4
+            ScriptFamily.DEVANAGARI -> if (normalizedLanguage in setOf("hindi", "marathi", "nepali", "sanskrit")) 6 else -4
+            ScriptFamily.BENGALI -> if (normalizedLanguage == "bengali") 8 else -4
+            ScriptFamily.GURMUKHI -> if (normalizedLanguage == "punjabi") 8 else -4
+            ScriptFamily.GUJARATI -> if (normalizedLanguage == "gujarati") 8 else -4
+            ScriptFamily.TAMIL -> if (normalizedLanguage == "tamil") 8 else -4
+            ScriptFamily.TELUGU -> if (normalizedLanguage == "telugu") 8 else -4
+            ScriptFamily.KANNADA -> if (normalizedLanguage == "kannada") 8 else -4
+            ScriptFamily.MALAYALAM -> if (normalizedLanguage == "malayalam") 8 else -4
+            else -> 0
+        }
+    }
+
+    private fun penaltyScore(candidate: Candidate, requestedTitle: String): Int {
+        val requestedPenaltyTerms = extractPenaltyTerms(requestedTitle)
+        val candidateTerms = extractPenaltyTerms(normalizeTitleCore(candidate.title) + " " + normalizeTitleCore(candidate.albumName.orEmpty()))
+        val extraTerms = candidateTerms - requestedPenaltyTerms
+        var score = 0
+        if ("cover" in extraTerms) score -= 55
+        if ("karaoke" in extraTerms) score -= 55
+        if ("tribute" in extraTerms) score -= 45
+        if ("instrumental" in extraTerms) score -= 35
+        if ("acoustic" in extraTerms) score -= 22
+        if ("live" in extraTerms) score -= 20
+        if ("remix" in extraTerms) score -= 20
+        if ("slowed" in extraTerms || "reverb" in extraTerms) score -= 25
+        if ("dj" in extraTerms || "mix" in extraTerms) score -= 18
+        if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 35
+        return score
+    }
+
+    private fun extractPenaltyTerms(text: String): Set<String> {
+        val normalized = normalizeTitleCore(text)
+        val terms = linkedSetOf<String>()
+        listOf(
+            "cover",
+            "karaoke",
+            "tribute",
+            "instrumental",
+            "acoustic",
+            "live",
+            "remix",
+            "slowed",
+            "reverb",
+            "dj",
+            "mix",
+            "devotional",
+            "bhajan",
+            "aarti",
+        ).forEach { term ->
+            if (normalized.contains(term)) terms += term
+        }
+        return terms
+    }
+
+    private fun artistNamesMatch(left: String, right: String): Boolean {
+        return left == right || left.contains(right) || right.contains(left)
+    }
+
+    private fun tokenSimilarity(left: String, right: String): Int {
         val leftTokens = left.split(' ').filter { it.isNotBlank() }.toSet()
         val rightTokens = right.split(' ').filter { it.isNotBlank() }.toSet()
         if (leftTokens.isEmpty() || rightTokens.isEmpty()) return 0
         val overlap = leftTokens.intersect(rightTokens).size
         val denominator = max(leftTokens.size, rightTokens.size)
-        return ((overlap.toDouble() / denominator.toDouble()) * 40.0).roundToInt()
+        return ((overlap.toDouble() / denominator.toDouble()) * 55.0).roundToInt()
     }
 
-    private fun containsPenaltyTerms(value: String): Boolean {
-        val normalized = normalizeTitle(value)
-        return listOf(
-            "karaoke",
-            "instrumental",
-            "cover",
-            "tribute",
-            "lofi",
-            "slowed",
-            "reverb",
-            "remix",
-            "dj",
-            "8d",
-        ).any { normalized.contains(it) }
+    private fun normalizeArtist(value: String): String {
+        return normalizeBasic(value)
+            .replace(Regex("\\b(feat|featuring|ft)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
-    private fun normalizeTitle(value: String): String = value
-        .lowercase(Locale.ROOT)
-        .replace("&", "and")
-        .replace(Regex("[^a-z0-9 ]"), " ")
-        .replace(Regex("\\s+"), " ")
-        .trim()
+    private fun normalizeTitleCore(value: String): String {
+        return normalizeBasic(value)
+            .replace(Regex("\\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\\)"), " ")
+            .replace(Regex("\\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\\]"), " ")
+            .replace(Regex("\\b(feat|featuring|ft)\\b.*$"), " ")
+            .replace(Regex("\\b(song|full song|official music video|official video|lyric video|audio)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun normalizeBasic(value: String): String {
+        val stripped = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+        return stripped
+            .replace('&', ' ')
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun normalizeLanguage(value: String): String {
+        return normalizeBasic(value)
+            .replace(' ', '-')
+    }
+
+    private fun dominantScript(value: String): ScriptFamily {
+        val text = value.trim()
+        if (text.isBlank()) return ScriptFamily.UNKNOWN
+        for (ch in text) {
+            if (!Character.isLetter(ch)) continue
+            return when (Character.UnicodeBlock.of(ch)) {
+                Character.UnicodeBlock.BASIC_LATIN,
+                Character.UnicodeBlock.LATIN_1_SUPPLEMENT,
+                Character.UnicodeBlock.LATIN_EXTENDED_A,
+                Character.UnicodeBlock.LATIN_EXTENDED_B,
+                Character.UnicodeBlock.LATIN_EXTENDED_ADDITIONAL -> ScriptFamily.LATIN
+                Character.UnicodeBlock.DEVANAGARI,
+                Character.UnicodeBlock.DEVANAGARI_EXTENDED -> ScriptFamily.DEVANAGARI
+                Character.UnicodeBlock.ARABIC,
+                Character.UnicodeBlock.ARABIC_SUPPLEMENT,
+                Character.UnicodeBlock.ARABIC_EXTENDED_A -> ScriptFamily.ARABIC
+                Character.UnicodeBlock.CYRILLIC,
+                Character.UnicodeBlock.CYRILLIC_SUPPLEMENTARY,
+                Character.UnicodeBlock.CYRILLIC_EXTENDED_A,
+                Character.UnicodeBlock.CYRILLIC_EXTENDED_B -> ScriptFamily.CYRILLIC
+                Character.UnicodeBlock.BENGALI -> ScriptFamily.BENGALI
+                Character.UnicodeBlock.GURMUKHI -> ScriptFamily.GURMUKHI
+                Character.UnicodeBlock.GUJARATI -> ScriptFamily.GUJARATI
+                Character.UnicodeBlock.ORIYA -> ScriptFamily.ORIYA
+                Character.UnicodeBlock.TAMIL -> ScriptFamily.TAMIL
+                Character.UnicodeBlock.TELUGU -> ScriptFamily.TELUGU
+                Character.UnicodeBlock.KANNADA -> ScriptFamily.KANNADA
+                Character.UnicodeBlock.MALAYALAM -> ScriptFamily.MALAYALAM
+                Character.UnicodeBlock.THAI -> ScriptFamily.THAI
+                Character.UnicodeBlock.HEBREW -> ScriptFamily.HEBREW
+                Character.UnicodeBlock.HANGUL_SYLLABLES,
+                Character.UnicodeBlock.HANGUL_JAMO,
+                Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO -> ScriptFamily.HANGUL
+                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS,
+                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A,
+                Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_B,
+                Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS -> ScriptFamily.CJK
+                Character.UnicodeBlock.HIRAGANA,
+                Character.UnicodeBlock.KATAKANA,
+                Character.UnicodeBlock.KATAKANA_PHONETIC_EXTENSIONS -> ScriptFamily.KANA
+                else -> ScriptFamily.UNKNOWN
+            }
+        }
+        return ScriptFamily.UNKNOWN
+    }
 
     private fun parseBitrate(quality: String): Int {
-        val normalized = quality.lowercase(Locale.ROOT)
-        return Regex("(\\d{2,3})").find(normalized)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { it * 1000 }
-            ?: when {
-                normalized.contains("lossless") -> 1411_000
-                normalized.contains("high") -> 320_000
-                normalized.contains("medium") -> 160_000
-                else -> 96_000
-            }
+        val number = Regex("(\\d+)").find(quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return 0
+        return number * 1000
     }
 
-    private fun inferMimeType(url: String): String = when {
-        url.contains(".m4a", ignoreCase = true) || url.contains("aac", ignoreCase = true) -> "audio/mp4"
-        url.contains(".ogg", ignoreCase = true) || url.contains("opus", ignoreCase = true) -> "audio/ogg"
-        else -> "audio/mpeg"
-    }
-
-    private fun decodeMaybe(value: String): String {
-        if (value.isBlank()) return value
-        return runCatching { URLDecoder.decode(value, Charsets.UTF_8.name()) }.getOrDefault(value)
-    }
-
-    private fun upgradeImageUrl(value: String): String {
-        if (value.isBlank()) return value
-        return value
-            .replace("50x50", "500x500", ignoreCase = true)
-            .replace("150x150", "500x500", ignoreCase = true)
+    private fun inferMimeType(url: String): String {
+        val lower = url.lowercase(Locale.ROOT)
+        return when {
+            lower.contains(".m4a") || lower.contains("mime=audio/mp4") -> "audio/mp4"
+            lower.contains(".aac") -> "audio/aac"
+            else -> "audio/mpeg"
+        }
     }
 }
