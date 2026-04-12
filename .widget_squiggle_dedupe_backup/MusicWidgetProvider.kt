@@ -324,6 +324,25 @@ class MusicWidgetProvider : AppWidgetProvider() {
         return bmp
     }
 
+    private fun applySquiggleProgress(
+        views: RemoteViews,
+        progress: Int,
+        isPlaying: Boolean,
+    ) {
+        val played = 0xFFFFFFFF.toInt()
+        val rest = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
+        views.setImageViewBitmap(
+            R.id.widget_progress_wave,
+            createSquiggleProgressBitmap(
+                width = 720,
+                height = 36,
+                progress = progress / 1000f,
+                playedColor = played,
+                restColor = rest,
+            ),
+        )
+    }
+
     private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Float): Bitmap {
         val size = minOf(bitmap.width, bitmap.height)
         val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)

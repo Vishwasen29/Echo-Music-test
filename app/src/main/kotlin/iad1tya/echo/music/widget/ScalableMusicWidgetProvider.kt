@@ -366,25 +366,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         return bmp
     }
 
-    private fun applySquiggleProgress(
-        views: RemoteViews,
-        progress: Int,
-        isPlaying: Boolean,
-    ) {
-        val filled = ACTIVE_ICON
-        val empty = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
-        views.setImageViewBitmap(
-            R.id.widget_progress_wave,
-            createWaveformProgressBitmap(
-                width = 720,
-                height = 36,
-                progress = progress / 1000f,
-                filledColor = filled,
-                emptyColor = empty,
-            ),
-        )
-    }
-
     private fun chooseBackgroundColor(bitmap: Bitmap): Int {
         val palette = Palette.from(bitmap).clearFilters().generate()
         return palette.getDarkVibrantColor(
