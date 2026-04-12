@@ -33,8 +33,8 @@ import iad1tya.echo.music.db.entities.SongEntity
 import iad1tya.echo.music.di.DownloadCache
 import iad1tya.echo.music.di.PlayerCache
 import iad1tya.echo.music.models.toMediaMetadata
-import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.StreamClientUtils
+import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.YTPlayerUtils
 import iad1tya.echo.music.utils.dataStore
 import iad1tya.echo.music.utils.enumPreference
@@ -47,6 +47,8 @@ import java.time.LocalDateTime
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
+import iad1tya.echo.music.db.entities.ArtistEntity
+import iad1tya.echo.music.db.entities.SongArtistMap
 
 @Singleton
 class DownloadUtil
@@ -114,29 +116,10 @@ constructor(
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            resolveSaavnDownload(mediaId)?.let { resolved ->
-                database.query {
-                    upsert(resolved.formatEntity)
-
-                    val now = LocalDateTime.now()
-                    val existing = getSongByIdBlocking(mediaId)?.song
-
-                    val updatedSong = if (existing != null) {
-                        if (existing.dateDownload == null) {
-                            existing.copy(dateDownload = now)
-                        } else {
-                            existing
-                        }
-                    } else {
-                        resolved.metadata.toSongEntity().copy(
-                            dateDownload = now,
-                            isDownloaded = false,
-                        )
-                    }
-
-                    upsert(updatedSong)
-                }
-
+            runBlocking(Dispatchers.IO) { resolveSaavnDownload(mediaId) }?.let { resolved ->
+                database.query { upsert(resolved.formatEntity) }
+                val now = LocalDateTime.now()
+                upsertResolvedSaavnMetadata(mediaId, resolved, now)
                 songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
                 return@Factory dataSpec.withUri(resolved.url.toUri())
             }
@@ -206,13 +189,71 @@ constructor(
         val url: String,
         val expiresAtMs: Long,
         val formatEntity: FormatEntity,
-        val metadata: iad1tya.echo.music.models.MediaMetadata,
+        val title: String?,
+        val artists: List<String>,
+        val thumbnailUrl: String?,
+        val albumTitle: String?,
+        val durationSeconds: Int?,
+        val metadata: iad1tya.echo.music.models.MediaMetadata?,
     )
 
     private fun codecForMimeType(mimeType: String): String = when {
         mimeType.contains("mp4", ignoreCase = true) || mimeType.contains("aac", ignoreCase = true) -> "mp4a.40.2"
-        mimeType.contains("opus", ignoreCase = true) || mimeType.contains("webm", ignoreCase = true) -> "opus"
+        mimeType.contains("opus", ignoreCase = true) || mimeType.contains("ogg", ignoreCase = true) || mimeType.contains("webm", ignoreCase = true) -> "opus"
         else -> "mp3"
+    }
+
+    private fun stableSaavnArtistId(name: String): String {
+        val normalized = name
+            .trim()
+            .lowercase(java.util.Locale.ROOT)
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
+            .ifBlank { "artist" }
+        return "saavn_artist_$normalized"
+    }
+
+    private fun upsertResolvedSaavnMetadata(mediaId: String, resolved: ExternalResolvedUrl, now: LocalDateTime) {
+        database.query {
+            val existingSong = getSongByIdBlocking(mediaId)?.song
+            val mergedSong = if (existingSong != null) {
+                existingSong.copy(
+                    title = resolved.title?.takeIf { it.isNotBlank() } ?: existingSong.title,
+                    duration = existingSong.duration.takeIf { it > 0 } ?: (resolved.duration ?: existingSong.duration),
+                    thumbnailUrl = resolved.thumbnailUrl ?: existingSong.thumbnailUrl,
+                    albumName = resolved.albumTitle ?: existingSong.albumName,
+                    dateDownload = existingSong.dateDownload ?: now,
+                )
+            } else {
+                SongEntity(
+                    id = mediaId,
+                    title = resolved.title?.takeIf { it.isNotBlank() } ?: mediaId,
+                    duration = resolved.duration ?: 0,
+                    thumbnailUrl = resolved.thumbnailUrl,
+                    albumName = resolved.albumTitle,
+                    dateDownload = now,
+                    isDownloaded = false,
+                )
+            }
+            upsert(mergedSong)
+
+            if (resolved.artists.isNotEmpty()) {
+                songArtistMap(mediaId).forEach(::delete)
+                resolved.artists.distinct().forEachIndexed { index, artistName ->
+                    val cleaned = artistName.trim()
+                    if (cleaned.isBlank()) return@forEachIndexed
+                    val artistId = stableSaavnArtistId(cleaned)
+                    insert(ArtistEntity(id = artistId, name = cleaned))
+                    insert(
+                        SongArtistMap(
+                            songId = mediaId,
+                            artistId = artistId,
+                            position = index,
+                        )
+                    )
+                }
+            }
+        }
     }
 
     private suspend fun resolveSaavnDownload(mediaId: String): ExternalResolvedUrl? {
