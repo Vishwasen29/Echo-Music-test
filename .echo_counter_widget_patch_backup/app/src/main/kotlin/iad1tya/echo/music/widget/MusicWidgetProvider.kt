@@ -16,7 +16,6 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.widget.RemoteViews
-import android.view.View
 import androidx.palette.graphics.Palette
 import iad1tya.echo.music.R
 import iad1tya.echo.music.playback.MusicService
@@ -44,7 +43,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
             durationMs: Long,
             repeatMode: Int,
             shuffleEnabled: Boolean,
-            trackCounter: String?,
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
             val componentName = ComponentName(context, MusicWidgetProvider::class.java)
@@ -61,7 +59,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
                 durationMs = durationMs,
                 repeatMode = repeatMode,
                 shuffleEnabled = shuffleEnabled,
-                trackCounter = trackCounter,
             )
         }
     }
@@ -83,7 +80,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
             durationMs = 0L,
             repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF,
             shuffleEnabled = false,
-            trackCounter = null,
         )
     }
 
@@ -159,11 +155,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
     ) {
         views.setTextViewText(R.id.widget_song_title, songTitle ?: "Nothing playing")
         views.setTextViewText(R.id.widget_artist_name, artistName ?: "Echo Music")
-        views.setTextViewText(R.id.widget_track_counter, trackCounter ?: "")
-        views.setViewVisibility(
-            R.id.widget_track_counter,
-            if (trackCounter.isNullOrBlank()) View.GONE else View.VISIBLE,
-        )
         views.setImageViewResource(
             R.id.widget_play_pause,
             if (isPlaying) R.drawable.pause else R.drawable.play,
@@ -239,7 +230,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
         durationMs: Long,
         repeatMode: Int,
         shuffleEnabled: Boolean,
-        trackCounter: String?,
     ) {
         if (appWidgetIds.isEmpty()) return
 
@@ -255,7 +245,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
                 durationMs = durationMs,
                 repeatMode = repeatMode,
                 shuffleEnabled = shuffleEnabled,
-                trackCounter = trackCounter,
             )
             views.setImageViewResource(R.id.widget_album_art, R.drawable.echo_logo)
             views.setImageViewResource(R.id.widget_background_tint, R.drawable.widget_background)

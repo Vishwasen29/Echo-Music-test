@@ -72,23 +72,6 @@
                     android:text="Echo Music"
                     android:textColor="#D9FFFFFF"
                     android:textSize="14sp" />
-
-
-                <TextView
-                    android:id="@+id/widget_track_counter"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:background="@drawable/widget_play_button_bg"
-                    android:paddingStart="8dp"
-                    android:paddingTop="3dp"
-                    android:paddingEnd="8dp"
-                    android:paddingBottom="3dp"
-                    android:text=""
-                    android:textColor="@android:color/black"
-                    android:textSize="11sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
             </LinearLayout>
 
             <ProgressBar

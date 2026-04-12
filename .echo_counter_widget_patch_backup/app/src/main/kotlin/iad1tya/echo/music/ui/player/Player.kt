@@ -940,16 +940,6 @@ fun BottomSheetPlayer(
                     listOfNotNull(source, bitrate).joinToString(" • ")
                 } ?: "Source pending"
 
-                val trackCounterText = run {
-                    val currentIndex = playerConnection.player.currentMediaItemIndex
-                    val totalItems = playerConnection.player.mediaItemCount
-                    if (currentIndex >= 0 && totalItems > 0) {
-                        "Track ${currentIndex + 1} of $totalItems"
-                    } else {
-                        null
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
@@ -959,17 +949,6 @@ fun BottomSheetPlayer(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-
-                trackCounterText?.let { counterText ->
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = counterText,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextBackgroundColor.copy(alpha = 0.72f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
 
                 if (showInlineLyrics) {
                     Box(

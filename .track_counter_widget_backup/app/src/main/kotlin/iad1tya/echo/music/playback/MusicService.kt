@@ -1216,7 +1216,7 @@ class MusicService :
                     .setSessionCommand(CommandToggleShuffle)
                     .build(),
                 CommandButton.Builder()
-                    .setDisplayName(currentNotificationActionLabel(getString(R.string.start_radio)))
+                    .setDisplayName(getString(R.string.start_radio))
                     .setIconResId(R.drawable.radio)
                     .setSessionCommand(CommandToggleStartRadio)
                     .setEnabled(currentSong.value != null)
@@ -3189,20 +3189,6 @@ class MusicService :
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo) = mediaSession
     
-
-    // ECHO_PATCH_TRACK_COUNTER_HELPERS
-    private fun currentTrackCounterCompact(): String? {
-        val index = player.currentMediaItemIndex
-        val total = player.mediaItemCount
-        return if (index >= 0 && total > 0) "${index + 1}/$total" else null
-    }
-
-    private fun currentTrackCounterLabel(): String? =
-        currentTrackCounterCompact()?.let { "Track $it" }
-
-    private fun currentNotificationActionLabel(base: String): String =
-        currentTrackCounterCompact()?.let { "$base • $it" } ?: base
-
     private fun updateWidget() {
         val metadata = player.currentMetadata
         val safeDuration = when {
@@ -3221,7 +3207,6 @@ class MusicService :
             durationMs = safeDuration,
             repeatMode = player.repeatMode,
             shuffleEnabled = player.shuffleModeEnabled,
-            trackCounter = currentTrackCounterCompact(),
         )
     }
 
@@ -3244,8 +3229,6 @@ class MusicService :
         const val ACTION_PLAY_PAUSE = "iad1tya.echo.music.playback.ACTION_PLAY_PAUSE"
         const val ACTION_NEXT = "iad1tya.echo.music.playback.ACTION_NEXT"
         const val ACTION_PREVIOUS = "iad1tya.echo.music.playback.ACTION_PREVIOUS"
-        const val ACTION_TOGGLE_SHUFFLE = "iad1tya.echo.music.playback.ACTION_TOGGLE_SHUFFLE"
-        const val ACTION_TOGGLE_REPEAT = "iad1tya.echo.music.playback.ACTION_TOGGLE_REPEAT"
         const val ERROR_CODE_NO_STREAM = 1000001
         const val CHUNK_LENGTH = 512 * 1024L
         const val PERSISTENT_QUEUE_FILE = "persistent_queue.data"
