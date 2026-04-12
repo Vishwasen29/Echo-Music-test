@@ -804,7 +804,7 @@ fun BottomSheetPlayer(
                         }
                     } else {
                         // Placeholder to maintain consistent spacing
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(40.dp))
                     }
                     Spacer(Modifier.height(8.dp))
 
@@ -815,7 +815,7 @@ fun BottomSheetPlayer(
                     ) { title ->
                         Text(
                             text = title,
-                            style = MaterialTheme.typography.headlineMedium,
+                            style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -853,7 +853,7 @@ fun BottomSheetPlayer(
                             mediaMetadata.artists.forEachIndexed { index, artist ->
                                 val tag = "artist_${artist.id.orEmpty()}"
                                 pushStringAnnotation(tag = tag, annotation = artist.id.orEmpty())
-                                withStyle(SpanStyle(color = TextBackgroundColor.copy(alpha = 0.86f), fontSize = 18.sp)) {
+                                withStyle(SpanStyle(color = TextBackgroundColor, fontSize = 16.sp)) {
                                     append(artist.name)
                                 }
                                 pop()
@@ -1252,116 +1252,119 @@ fun BottomSheetPlayer(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
 
             if (useNewPlayerDesign) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PlayerHorizontalPadding),
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedIconButton(
-                        onClick = { playerConnection.player.shuffleModeEnabled = !playerConnection.player.shuffleModeEnabled },
-                        colors = IconButtonDefaults.outlinedIconButtonColors(
-                            contentColor = TextBackgroundColor,
-                            containerColor = Color.Transparent,
-                        ),
-                        border = null,
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.shuffle),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = if (playerConnection.player.shuffleModeEnabled) TextBackgroundColor else TextBackgroundColor.copy(alpha = 0.66f)
-                        )
+                    val maxW = maxWidth
+                    val isTablet = LocalConfiguration.current.screenWidthDp >= 840
+                    val playButtonHeight = if (isTablet) {
+                        86.dp
+                    } else {
+                        (maxW / 6f).coerceIn(68.dp, 96.dp)
                     }
-
-                    OutlinedIconButton(
-                        onClick = playerConnection::seekToPrevious,
-                        enabled = canSkipPrevious,
-                        colors = IconButtonDefaults.outlinedIconButtonColors(
-                            contentColor = TextBackgroundColor,
-                            containerColor = Color.Transparent,
-                        ),
-                        border = null,
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.skip_previous),
-                            contentDescription = null,
-                            modifier = Modifier.size(32.dp)
-                        )
+                    val playButtonWidth = if (isTablet) {
+                        210.dp
+                    } else {
+                        playButtonHeight * 2.2f
                     }
+                    val sideButtonHeight = if (isTablet) {
+                        68.dp
+                    } else {
+                        playButtonHeight * 0.8f
+                    }
+                    val sideButtonWidth = sideButtonHeight * 1.3f
 
-                    FilledIconButton(
-                        onClick = {
-                            if (playbackState == STATE_ENDED) {
-                                playerConnection.player.seekTo(0, 0)
-                                playerConnection.player.playWhenReady = true
-                            } else {
-                                playerConnection.player.togglePlayPause()
-                            }
-                        },
-                        colors = IconButtonDefaults.filledIconButtonColors(
-                            containerColor = Color.White,
-                            contentColor = Color.Black,
+                    val playInteractionSource = remember { MutableInteractionSource() }
+                    val isPlayPressed by playInteractionSource.collectIsPressedAsState()
+                    val playBounceScale by animateFloatAsState(
+                        targetValue = if (isPlayPressed) 0.90f else 1f,
+                        animationSpec = spring(
+                            dampingRatio = Spring.DampingRatioMediumBouncy,
+                            stiffness = Spring.StiffnessMedium
                         ),
-                        modifier = Modifier.size(84.dp)
+                        label = "playBounceScale"
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(
-                            painter = painterResource(
-                                when {
-                                    playbackState == STATE_ENDED -> R.drawable.replay
-                                    isPlaying -> R.drawable.pause
-                                    else -> R.drawable.play
-                                }
+
+                        FilledTonalIconButton(
+                            onClick = playerConnection::seekToPrevious,
+                            enabled = canSkipPrevious,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = textButtonColor,
+                                contentColor = iconButtonColor
                             ),
-                            contentDescription = null,
-                            modifier = Modifier.size(40.dp)
-                        )
-                    }
+                            modifier = Modifier
+                                .size(width = sideButtonWidth, height = sideButtonHeight)
+                                .clip(RoundedCornerShape(32.dp))
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.skip_previous),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
 
-                    OutlinedIconButton(
-                        onClick = playerConnection::seekToNext,
-                        enabled = canSkipNext,
-                        colors = IconButtonDefaults.outlinedIconButtonColors(
-                            contentColor = TextBackgroundColor,
-                            containerColor = Color.Transparent,
-                        ),
-                        border = null,
-                        modifier = Modifier.size(52.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.skip_next),
-                            contentDescription = null,
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
+                        Spacer(modifier = Modifier.width(16.dp))
 
-                    OutlinedIconButton(
-                        onClick = { playerConnection.player.toggleRepeatMode() },
-                        colors = IconButtonDefaults.outlinedIconButtonColors(
-                            contentColor = TextBackgroundColor,
-                            containerColor = Color.Transparent,
-                        ),
-                        border = null,
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                when (repeatMode) {
-                                    Player.REPEAT_MODE_OFF, Player.REPEAT_MODE_ALL -> R.drawable.repeat
-                                    Player.REPEAT_MODE_ONE -> R.drawable.repeat_one
-                                    else -> R.drawable.repeat
+                        FilledIconButton(
+                            onClick = {
+                                if (playbackState == STATE_ENDED) {
+                                    playerConnection.player.seekTo(0, 0)
+                                    playerConnection.player.playWhenReady = true
+                                } else {
+                                    playerConnection.player.togglePlayPause()
                                 }
+                            },
+                            interactionSource = playInteractionSource,
+                            colors = IconButtonDefaults.filledIconButtonColors(
+                                containerColor = textButtonColor,
+                                contentColor = iconButtonColor
                             ),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = if (repeatMode == Player.REPEAT_MODE_OFF) TextBackgroundColor.copy(alpha = 0.66f) else TextBackgroundColor
-                        )
+                            modifier = Modifier
+                                .size(width = playButtonWidth, height = playButtonHeight)
+                                .clip(RoundedCornerShape(32.dp))
+                                .graphicsLayer(scaleX = playBounceScale, scaleY = playBounceScale)
+                        ) {
+                            Icon(
+                                painter = painterResource(
+                                    when {
+                                        playbackState == STATE_ENDED -> R.drawable.replay
+                                        isPlaying -> R.drawable.pause
+                                        else -> R.drawable.play
+                                    }
+                                ),
+                                contentDescription = null,
+                                modifier = Modifier.size(42.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        FilledTonalIconButton(
+                            onClick = playerConnection::seekToNext,
+                            enabled = canSkipNext,
+                            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                                containerColor = textButtonColor,
+                                contentColor = iconButtonColor
+                            ),
+                            modifier = Modifier
+                                .size(width = sideButtonWidth, height = sideButtonHeight)
+                                .clip(RoundedCornerShape(32.dp))
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.skip_next),
+                                contentDescription = null,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
                     }
                 }
             } else {

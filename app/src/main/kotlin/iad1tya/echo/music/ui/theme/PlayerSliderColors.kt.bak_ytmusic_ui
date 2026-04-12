@@ -29,34 +29,30 @@ object PlayerSliderColors {
         playerBackground: PlayerBackgroundStyle,
         useDarkTheme: Boolean
     ): SliderColors {
-        val resolvedActiveColor = when (playerBackground) {
-            PlayerBackgroundStyle.DEFAULT -> if (useDarkTheme) Color.White else MaterialTheme.colorScheme.onSurface
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
-            PlayerBackgroundStyle.GLOW_ANIMATED -> Color.White
-        }
-
         val inactiveTrackColor = when (playerBackground) {
             PlayerBackgroundStyle.DEFAULT -> {
                 if (useDarkTheme) {
-                    Color.White.copy(alpha = 0.24f)
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
                 } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 }
             }
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
+            PlayerBackgroundStyle.GRADIENT -> {
+                Color.White.copy(alpha = 0.4f)
+            }
+            PlayerBackgroundStyle.BLUR -> {
+                Color.White.copy(alpha = 0.4f)
+            }
             PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.28f)
+                Color.White.copy(alpha = 0.4f)
             }
         }
-
+        
         return SliderDefaults.colors(
-            activeTrackColor = resolvedActiveColor,
-            activeTickColor = resolvedActiveColor,
-            thumbColor = resolvedActiveColor,
-            inactiveTrackColor = inactiveTrackColor,
-            inactiveTickColor = inactiveTrackColor,
+            activeTrackColor = activeColor,
+            activeTickColor = activeColor,
+            thumbColor = activeColor,
+            inactiveTrackColor = inactiveTrackColor
         )
     }
 
@@ -117,33 +113,29 @@ object PlayerSliderColors {
         playerBackground: PlayerBackgroundStyle,
         useDarkTheme: Boolean
     ): SliderColors {
-        val activeTrackColor = when (playerBackground) {
-            PlayerBackgroundStyle.DEFAULT -> if (useDarkTheme) Color.White else MaterialTheme.colorScheme.onSurface
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
-            PlayerBackgroundStyle.GLOW_ANIMATED -> Color.White
-        }
-
         val inactiveTrackColor = when (playerBackground) {
             PlayerBackgroundStyle.DEFAULT -> {
                 if (useDarkTheme) {
-                    Color.White.copy(alpha = 0.24f)
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.4f)
                 } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
                 }
             }
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
+            PlayerBackgroundStyle.GRADIENT -> {
+                Color.White.copy(alpha = 0.4f)
+            }
+            PlayerBackgroundStyle.BLUR -> {
+                Color.White.copy(alpha = 0.4f)
+            }
             PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.28f)
+                Color.White.copy(alpha = 0.4f)
             }
         }
-
+        
         return SliderDefaults.colors(
-            activeTrackColor = activeTrackColor,
-            activeTickColor = activeTrackColor,
-            inactiveTrackColor = inactiveTrackColor,
-            inactiveTickColor = inactiveTrackColor,
+            activeTrackColor = buttonColor,
+            activeTickColor = buttonColor,
+            inactiveTrackColor = inactiveTrackColor
         )
     }
 

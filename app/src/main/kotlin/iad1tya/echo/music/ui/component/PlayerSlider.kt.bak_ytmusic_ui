@@ -24,7 +24,7 @@ fun PlayerSliderTrack(
     sliderState: SliderState,
     modifier: Modifier = Modifier,
     colors: SliderColors = SliderDefaults.colors(),
-    trackHeight: Dp = 4.dp
+    trackHeight: Dp = 10.dp
 ) {
     val inactiveTrackColor = colors.inactiveTrackColor
     val activeTrackColor = colors.activeTrackColor
@@ -61,14 +61,14 @@ private fun DrawScope.drawTrack(
     activeTrackColor: Color,
     inactiveTickColor: Color,
     activeTickColor: Color,
-    trackHeight: Dp = 4.dp
+    trackHeight: Dp = 2.dp
 ) {
     val isRtl = layoutDirection == LayoutDirection.Rtl
     val sliderLeft = Offset(0f, center.y)
     val sliderRight = Offset(size.width, center.y)
     val sliderStart = if (isRtl) sliderRight else sliderLeft
     val sliderEnd = if (isRtl) sliderLeft else sliderRight
-    val tickSize = 0.dp.toPx()
+    val tickSize = 2.0.dp.toPx()
     val trackStrokeWidth = trackHeight.toPx()
     drawLine(
         inactiveTrackColor,
