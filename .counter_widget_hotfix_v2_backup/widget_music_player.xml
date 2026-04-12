@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="8dp">
+
+    <ImageView
+        android:id="@+id/widget_background_tint"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:adjustViewBounds="false"
+        android:contentDescription=""
+        android:scaleType="fitXY"
+        android:src="@drawable/widget_background" />
+
+    <RelativeLayout
+        android:id="@+id/widget_root_click"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:paddingStart="12dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="12dp">
+
+        <ImageView
+            android:id="@+id/widget_album_art"
+            android:layout_width="88dp"
+            android:layout_height="88dp"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true"
+            android:background="@drawable/widget_album_art_background"
+            android:clipToOutline="true"
+            android:contentDescription="Album art"
+            android:scaleType="centerCrop"
+            android:src="@drawable/echo_logo" />
+
+        <LinearLayout
+            android:id="@+id/widget_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_centerVertical="true"
+            android:layout_toEndOf="@id/widget_album_art"
+            android:layout_marginStart="14dp"
+            android:orientation="vertical">
+
+            <LinearLayout
+                android:id="@+id/widget_song_info"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/widget_song_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif-medium"
+                    android:maxLines="1"
+                    android:text="Nothing playing"
+                    android:textColor="@android:color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/widget_artist_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
+                    android:fontFamily="sans-serif"
+                    android:maxLines="1"
+                    android:text="Echo Music"
+                    android:textColor="#D9FFFFFF"
+                    android:textSize="14sp" />
+
+
+                <TextView
+                    android:id="@+id/widget_track_counter"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/widget_play_button_bg"
+                    android:paddingStart="8dp"
+                    android:paddingTop="3dp"
+                    android:paddingEnd="8dp"
+                    android:paddingBottom="3dp"
+                    android:text=""
+                    android:textColor="@android:color/black"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <ProgressBar
+                android:id="@+id/widget_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="4dp"
+                android:layout_marginTop="10dp"
+                android:indeterminate="false"
+                android:max="1000"
+                android:progress="0"
+                android:progressDrawable="@drawable/widget_progress_drawable" />
+
+            <LinearLayout
+                android:id="@+id/widget_controls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/widget_shuffle"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Shuffle"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/shuffle"
+                    android:tint="#88FFFFFF" />
+
+                <ImageButton
+                    android:id="@+id/widget_previous"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Previous"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/skip_previous"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
+                    android:id="@+id/widget_play_pause"
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/widget_play_button_bg"
+                    android:contentDescription="Play or pause"
+                    android:padding="14dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/play"
+                    android:tint="@android:color/black" />
+
+                <ImageButton
+                    android:id="@+id/widget_next"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Next"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/skip_next"
+                    android:tint="@android:color/white" />
+
+                <ImageButton
+                    android:id="@+id/widget_repeat"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="8dp"
+                    android:background="@android:color/transparent"
+                    android:contentDescription="Repeat"
+                    android:padding="6dp"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/repeat"
+                    android:tint="#88FFFFFF" />
+            </LinearLayout>
+        </LinearLayout>
+    </RelativeLayout>
+</FrameLayout>

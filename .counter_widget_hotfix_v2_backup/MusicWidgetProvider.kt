@@ -156,7 +156,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
         durationMs: Long,
         repeatMode: Int,
         shuffleEnabled: Boolean,
-        trackCounter: String?,
     ) {
         views.setTextViewText(R.id.widget_song_title, songTitle ?: "Nothing playing")
         views.setTextViewText(R.id.widget_artist_name, artistName ?: "Echo Music")
@@ -295,7 +294,6 @@ class MusicWidgetProvider : AppWidgetProvider() {
                             durationMs = durationMs,
                             repeatMode = repeatMode,
                             shuffleEnabled = shuffleEnabled,
-                            trackCounter = trackCounter,
                         )
                         views.setImageViewBitmap(R.id.widget_album_art, artBitmap)
                         views.setImageViewBitmap(R.id.widget_background_tint, bgBitmap)
