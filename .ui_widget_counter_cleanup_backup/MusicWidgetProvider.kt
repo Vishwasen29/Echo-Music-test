@@ -9,14 +9,12 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.widget.RemoteViews
-import androidx.palette.graphics.Palette
 import iad1tya.echo.music.R
 import iad1tya.echo.music.playback.MusicService
 import kotlinx.coroutines.CoroutineScope
@@ -26,7 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URL
 
-class ScalableMusicWidgetProvider : AppWidgetProvider() {
+class MusicWidgetProvider : AppWidgetProvider() {
 
     companion object {
 
@@ -95,14 +93,14 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             return bitmap
         }
 
-        private fun applySquiggleProgress(
+        private fun applyWaveformProgress(
             views: RemoteViews,
             progress: Int,
             isPlaying: Boolean,
         ) {
-            val played = ACTIVE_ICON
+            val played = 0xFFFFFFFF.toInt()
             val track = if (isPlaying) 0x66FFFFFF else 0x40FFFFFF
-            val knob = ACTIVE_ICON
+            val knob = 0xFFFFFFFF.toInt()
             views.setImageViewBitmap(
                 R.id.widget_progress_wave,
                 createWaveformProgressBitmap(
@@ -117,11 +115,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         }
 
 
-        private const val DEFAULT_BG = 0xFF111111.toInt()
-        private const val INACTIVE_ICON = 0x88FFFFFF.toInt()
-        private const val ACTIVE_ICON = 0xFFFFFFFF.toInt()
-        private const val BACKGROUND_ALPHA = 179
-
         fun updateWidget(
             context: Context,
             songTitle: String?,
@@ -130,14 +123,12 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             isPlaying: Boolean,
             positionMs: Long,
             durationMs: Long,
-            repeatMode: Int,
-            shuffleEnabled: Boolean,
             trackCounter: String? = null,
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, ScalableMusicWidgetProvider::class.java)
+            val componentName = ComponentName(context, MusicWidgetProvider::class.java)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
-            ScalableMusicWidgetProvider().updateWidgets(
+            MusicWidgetProvider().updateWidgets(
                 context = context,
                 appWidgetManager = appWidgetManager,
                 appWidgetIds = appWidgetIds,
@@ -147,8 +138,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 durationMs = durationMs,
-                repeatMode = repeatMode,
-                shuffleEnabled = shuffleEnabled,
                 trackCounter = trackCounter,
             )
         }
@@ -160,7 +149,7 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             isPlaying: Boolean,
         ) {
             val appWidgetManager = AppWidgetManager.getInstance(context)
-            val componentName = ComponentName(context, ScalableMusicWidgetProvider::class.java)
+            val componentName = ComponentName(context, MusicWidgetProvider::class.java)
             val appWidgetIds = appWidgetManager.getAppWidgetIds(componentName)
             if (appWidgetIds.isEmpty()) return
 
@@ -169,8 +158,8 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             val progress = if (safeDuration > 0L) ((safePosition * 1000L) / safeDuration).toInt() else 0
 
             for (appWidgetId in appWidgetIds) {
-                val views = RemoteViews(context.packageName, R.layout.widget_music_player_large)
-                applySquiggleProgress(views, progress.coerceIn(0, 1000), isPlaying)
+                val views = RemoteViews(context.packageName, R.layout.widget_music_player)
+                applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
                 views.setImageViewResource(
                     R.id.widget_play_pause,
                     if (isPlaying) R.drawable.pause else R.drawable.play,
@@ -195,8 +184,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             isPlaying = false,
             positionMs = 0L,
             durationMs = 0L,
-            repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF,
-            shuffleEnabled = false,
             trackCounter = null,
         )
     }
@@ -218,108 +205,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
-    }
-
-
-    // ECHO_FIX_SQUIGGLE_WIDGET
-    private fun createSquiggleProgressBitmap(
-        width: Int,
-        height: Int,
-        progress: Float,
-        playedColor: Int,
-        restColor: Int,
-    ): Bitmap {
-        val safeWidth = width.coerceAtLeast(240)
-        val safeHeight = height.coerceAtLeast(18)
-        val bmp = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-
-        val centerY = safeHeight / 2f
-        val amplitude = safeHeight * 0.18f
-        val playedEndX = (safeWidth * progress.coerceIn(0f, 1f)).coerceIn(0f, safeWidth.toFloat())
-
-        val restPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = restColor
-            style = Paint.Style.STROKE
-            strokeWidth = (safeHeight * 0.18f).coerceAtLeast(3f)
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-        }
-        canvas.drawLine(0f, centerY, safeWidth.toFloat(), centerY, restPaint)
-
-        val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = playedColor
-            style = Paint.Style.STROKE
-            strokeWidth = (safeHeight * 0.22f).coerceAtLeast(4f)
-            strokeCap = Paint.Cap.ROUND
-            strokeJoin = Paint.Join.ROUND
-        }
-
-        if (playedEndX > 0f) {
-            val path = android.graphics.Path()
-            val cycles = 2.4f
-            val segments = 64
-            for (i in 0..segments) {
-                val t = i / segments.toFloat()
-                val x = playedEndX * t
-                val y = centerY + kotlin.math.sin(t * cycles * Math.PI * 2.0).toFloat() * amplitude
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
-            canvas.drawPath(path, playedPaint)
-
-            val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playedColor }
-            canvas.drawCircle(playedEndX, centerY, safeHeight * 0.23f, knobPaint)
-        }
-
-        return bmp
-    }
-
-    private fun applySquiggleProgress(
-        views: RemoteViews,
-        progress: Int,
-        isPlaying: Boolean,
-    ) {
-        val played = ACTIVE_ICON
-        val rest = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
-        views.setImageViewBitmap(
-            R.id.widget_progress_wave,
-            createSquiggleProgressBitmap(
-                width = 720,
-                height = 36,
-                progress = progress / 1000f,
-                playedColor = played,
-                restColor = rest,
-            ),
-        )
-    }
-
-    private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Float): Bitmap {
-        val size = minOf(bitmap.width, bitmap.height)
-        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        val dstRect = Rect(0, 0, size, size)
-        val dstRectF = RectF(dstRect)
-        val srcLeft = (bitmap.width - size) / 2
-        val srcTop = (bitmap.height - size) / 2
-        val srcRect = Rect(srcLeft, srcTop, srcLeft + size, srcTop + size)
-
-        canvas.drawARGB(0, 0, 0, 0)
-        paint.color = Color.WHITE
-        canvas.drawRoundRect(dstRectF, radiusPx, radiusPx, paint)
-        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-        canvas.drawBitmap(bitmap, srcRect, dstRect, paint)
-        paint.xfermode = null
-        return output
-    }
-
-    private fun createRoundedBackgroundBitmap(width: Int, height: Int, color: Int, radiusPx: Float): Bitmap {
-        val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.color = color
-        canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radiusPx, radiusPx, paint)
-        return output
     }
 
 
@@ -366,12 +251,12 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         return bmp
     }
 
-    private fun applySquiggleProgress(
+    private fun applyWaveformProgress(
         views: RemoteViews,
         progress: Int,
         isPlaying: Boolean,
     ) {
-        val filled = ACTIVE_ICON
+        val filled = 0xFFFFFFFF.toInt()
         val empty = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
         views.setImageViewBitmap(
             R.id.widget_progress_wave,
@@ -385,15 +270,24 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         )
     }
 
-    private fun chooseBackgroundColor(bitmap: Bitmap): Int {
-        val palette = Palette.from(bitmap).clearFilters().generate()
-        return palette.getDarkVibrantColor(
-            palette.getVibrantColor(
-                palette.getDarkMutedColor(
-                    palette.getDominantColor(DEFAULT_BG),
-                ),
-            ),
-        )
+    private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Float): Bitmap {
+        val size = minOf(bitmap.width, bitmap.height)
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        val dstRect = Rect(0, 0, size, size)
+        val dstRectF = RectF(dstRect)
+        val left = (bitmap.width - size) / 2
+        val top = (bitmap.height - size) / 2
+        val srcRect = Rect(left, top, left + size, top + size)
+
+        canvas.drawARGB(0, 0, 0, 0)
+        paint.color = 0xff424242.toInt()
+        canvas.drawRoundRect(dstRectF, radiusPx, radiusPx, paint)
+        paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bitmap, srcRect, dstRect, paint)
+        paint.xfermode = null
+        return output
     }
 
     private fun applyCommonState(
@@ -404,17 +298,17 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         isPlaying: Boolean,
         positionMs: Long,
         durationMs: Long,
-        repeatMode: Int,
-        shuffleEnabled: Boolean,
         trackCounter: String?,
     ) {
-        views.setTextViewText(R.id.widget_song_title, songTitle ?: "Nothing playing")
-        views.setTextViewText(R.id.widget_artist_name, artistName ?: "Echo Music")
-        views.setTextViewText(R.id.widget_track_counter, trackCounter ?: "")
-        views.setViewVisibility(
-            R.id.widget_track_counter,
-            if (trackCounter.isNullOrBlank()) android.view.View.GONE else android.view.View.VISIBLE,
-        )
+        views.setTextViewText(R.id.widget_song_title, songTitle ?: "No song playing")
+        val subtitle = buildString {
+            append(artistName ?: "Unknown artist")
+            if (!trackCounter.isNullOrBlank()) {
+                append(" • ")
+                append(trackCounter)
+            }
+        }
+        views.setTextViewText(R.id.widget_artist_name, subtitle)
         views.setImageViewResource(
             R.id.widget_play_pause,
             if (isPlaying) R.drawable.pause else R.drawable.play,
@@ -423,57 +317,31 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         val safeDuration = durationMs.coerceAtLeast(0L)
         val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else 0L)
         val progress = if (safeDuration > 0L) ((safePosition * 1000L) / safeDuration).toInt() else 0
-        applySquiggleProgress(views, progress.coerceIn(0, 1000), isPlaying)
-
-        val repeatRes = when (repeatMode) {
-            androidx.media3.common.Player.REPEAT_MODE_ONE -> R.drawable.repeat_one_on
-            androidx.media3.common.Player.REPEAT_MODE_ALL -> R.drawable.repeat_on
-            else -> R.drawable.repeat
-        }
-        views.setImageViewResource(R.id.widget_repeat, repeatRes)
-        views.setInt(
-            R.id.widget_repeat,
-            "setColorFilter",
-            if (repeatMode == androidx.media3.common.Player.REPEAT_MODE_OFF) INACTIVE_ICON else ACTIVE_ICON,
-        )
-        views.setInt(
-            R.id.widget_shuffle,
-            "setColorFilter",
-            if (shuffleEnabled) ACTIVE_ICON else INACTIVE_ICON,
-        )
+        applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
 
         views.setOnClickPendingIntent(
             R.id.widget_play_pause,
-            makeServicePendingIntent(context, 3002, MusicService.ACTION_PLAY_PAUSE),
+            makeServicePendingIntent(context, 2002, MusicService.ACTION_PLAY_PAUSE),
         )
         views.setOnClickPendingIntent(
             R.id.widget_previous,
-            makeServicePendingIntent(context, 3003, MusicService.ACTION_PREVIOUS),
+            makeServicePendingIntent(context, 2003, MusicService.ACTION_PREVIOUS),
         )
         views.setOnClickPendingIntent(
             R.id.widget_next,
-            makeServicePendingIntent(context, 3004, MusicService.ACTION_NEXT),
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_shuffle,
-            makeServicePendingIntent(context, 3005, MusicService.ACTION_TOGGLE_SHUFFLE),
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_repeat,
-            makeServicePendingIntent(context, 3006, MusicService.ACTION_TOGGLE_REPEAT),
+            makeServicePendingIntent(context, 2004, MusicService.ACTION_NEXT),
         )
 
         val openAppIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
         val openAppPendingIntent = PendingIntent.getActivity(
             context,
-            3007,
+            2007,
             openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         views.setOnClickPendingIntent(R.id.widget_root_click, openAppPendingIntent)
         views.setOnClickPendingIntent(R.id.widget_album_art, openAppPendingIntent)
         views.setOnClickPendingIntent(R.id.widget_song_info, openAppPendingIntent)
-        views.setInt(R.id.widget_background_tint, "setImageAlpha", BACKGROUND_ALPHA)
     }
 
     private fun updateWidgets(
@@ -486,14 +354,12 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         isPlaying: Boolean,
         positionMs: Long,
         durationMs: Long,
-        repeatMode: Int,
-        shuffleEnabled: Boolean,
         trackCounter: String?,
     ) {
         if (appWidgetIds.isEmpty()) return
 
         for (appWidgetId in appWidgetIds) {
-            val views = RemoteViews(context.packageName, R.layout.widget_music_player_large)
+            val views = RemoteViews(context.packageName, R.layout.widget_music_player)
             applyCommonState(
                 views = views,
                 context = context,
@@ -502,12 +368,9 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 durationMs = durationMs,
-                repeatMode = repeatMode,
-                shuffleEnabled = shuffleEnabled,
                 trackCounter = trackCounter,
             )
             views.setImageViewResource(R.id.widget_album_art, R.drawable.echo_logo)
-            views.setImageViewResource(R.id.widget_background_tint, R.drawable.widget_background)
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
@@ -521,21 +384,17 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
                     connect()
                 }
                 val bitmap = connection.getInputStream().use(BitmapFactory::decodeStream) ?: return@launch
-                val scaled = if (bitmap.width > 768 || bitmap.height > 768) {
-                    Bitmap.createScaledBitmap(bitmap, 768, 768, true)
+                val scaled = if (bitmap.width > 512 || bitmap.height > 512) {
+                    Bitmap.createScaledBitmap(bitmap, 512, 512, true)
                 } else {
                     bitmap
                 }
-                val artBitmap = getRoundedBitmap(scaled, 28f)
-                val bgColor = chooseBackgroundColor(scaled)
-                val bgBitmap = createRoundedBackgroundBitmap(1400, 620, bgColor, 40f)
+                val rounded = getRoundedBitmap(scaled, 18f)
 
                 withContext(Dispatchers.Main) {
                     for (appWidgetId in appWidgetIds) {
-                        val views = RemoteViews(context.packageName, R.layout.widget_music_player_large)
-                        views.setImageViewBitmap(R.id.widget_album_art, artBitmap)
-                        views.setImageViewBitmap(R.id.widget_background_tint, bgBitmap)
-                        views.setInt(R.id.widget_background_tint, "setImageAlpha", BACKGROUND_ALPHA)
+                        val views = RemoteViews(context.packageName, R.layout.widget_music_player)
+                        views.setImageViewBitmap(R.id.widget_album_art, rounded)
                         appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
                     }
                 }

@@ -93,7 +93,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
             return bitmap
         }
 
-        private fun applyWaveformProgress(
+        private fun applySquiggleProgress(
             views: RemoteViews,
             progress: Int,
             isPlaying: Boolean,
@@ -159,7 +159,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
 
             for (appWidgetId in appWidgetIds) {
                 val views = RemoteViews(context.packageName, R.layout.widget_music_player)
-                applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
+                applySquiggleProgress(views, progress.coerceIn(0, 1000), isPlaying)
                 views.setImageViewResource(
                     R.id.widget_play_pause,
                     if (isPlaying) R.drawable.pause else R.drawable.play,
@@ -251,7 +251,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
         return bmp
     }
 
-    private fun applyWaveformProgress(
+    private fun applySquiggleProgress(
         views: RemoteViews,
         progress: Int,
         isPlaying: Boolean,
@@ -266,6 +266,79 @@ class MusicWidgetProvider : AppWidgetProvider() {
                 progress = progress / 1000f,
                 filledColor = filled,
                 emptyColor = empty,
+            ),
+        )
+    }
+
+
+    // ECHO_FIX_SQUIGGLE_WIDGET
+    private fun createSquiggleProgressBitmap(
+        width: Int,
+        height: Int,
+        progress: Float,
+        playedColor: Int,
+        restColor: Int,
+    ): Bitmap {
+        val safeWidth = width.coerceAtLeast(240)
+        val safeHeight = height.coerceAtLeast(18)
+        val bmp = Bitmap.createBitmap(safeWidth, safeHeight, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+
+        val centerY = safeHeight / 2f
+        val amplitude = safeHeight * 0.18f
+        val playedEndX = (safeWidth * progress.coerceIn(0f, 1f)).coerceIn(0f, safeWidth.toFloat())
+
+        val restPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = restColor
+            style = Paint.Style.STROKE
+            strokeWidth = (safeHeight * 0.18f).coerceAtLeast(3f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+        canvas.drawLine(0f, centerY, safeWidth.toFloat(), centerY, restPaint)
+
+        val playedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = playedColor
+            style = Paint.Style.STROKE
+            strokeWidth = (safeHeight * 0.22f).coerceAtLeast(4f)
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        if (playedEndX > 0f) {
+            val path = android.graphics.Path()
+            val cycles = 2.4f
+            val segments = 64
+            for (i in 0..segments) {
+                val t = i / segments.toFloat()
+                val x = playedEndX * t
+                val y = centerY + kotlin.math.sin(t * cycles * Math.PI * 2.0).toFloat() * amplitude
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+            }
+            canvas.drawPath(path, playedPaint)
+
+            val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = playedColor }
+            canvas.drawCircle(playedEndX, centerY, safeHeight * 0.23f, knobPaint)
+        }
+
+        return bmp
+    }
+
+    private fun applySquiggleProgress(
+        views: RemoteViews,
+        progress: Int,
+        isPlaying: Boolean,
+    ) {
+        val played = 0xFFFFFFFF.toInt()
+        val rest = if (isPlaying) 0x55FFFFFF else 0x33FFFFFF
+        views.setImageViewBitmap(
+            R.id.widget_progress_wave,
+            createSquiggleProgressBitmap(
+                width = 720,
+                height = 36,
+                progress = progress / 1000f,
+                playedColor = played,
+                restColor = rest,
             ),
         )
     }
@@ -317,7 +390,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
         val safeDuration = durationMs.coerceAtLeast(0L)
         val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else 0L)
         val progress = if (safeDuration > 0L) ((safePosition * 1000L) / safeDuration).toInt() else 0
-        applyWaveformProgress(views, progress.coerceIn(0, 1000), isPlaying)
+        applySquiggleProgress(views, progress.coerceIn(0, 1000), isPlaying)
 
         views.setOnClickPendingIntent(
             R.id.widget_play_pause,
