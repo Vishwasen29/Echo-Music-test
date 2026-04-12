@@ -114,7 +114,7 @@ constructor(
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            runBlocking(Dispatchers.IO) { resolveSaavnDownload(mediaId) }?.let { resolved ->
+            resolveSaavnDownload(mediaId)?.let { resolved ->
                 database.query {
                     upsert(resolved.formatEntity)
 
