@@ -209,17 +209,10 @@ fun BottomSheetPlayer(
         key = UseNewPlayerDesignKey,
         defaultValue = true
     )
-    val playerBackgroundPref by rememberEnumPreference(
+    val playerBackground by rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.GRADIENT
+        defaultValue = PlayerBackgroundStyle.BLUR
     )
-    val playerBackground = remember(playerBackgroundPref) {
-        when (playerBackgroundPref) {
-            PlayerBackgroundStyle.DEFAULT,
-            PlayerBackgroundStyle.BLUR -> PlayerBackgroundStyle.GRADIENT
-            else -> playerBackgroundPref
-        }
-    }
     val playerButtonsStyle by rememberEnumPreference(
         key = PlayerButtonsStyleKey,
         defaultValue = PlayerButtonsStyle.DEFAULT
@@ -257,7 +250,7 @@ fun BottomSheetPlayer(
     val isCrossfading by playerConnection.service.isCrossfading.collectAsState()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsState()
     val canSkipNext by playerConnection.canSkipNext.collectAsState()
-    val sliderStyle = SliderStyle.SLIM
+    val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
 
     var position by rememberSaveable(playbackState) {
         mutableLongStateOf(playerConnection.player.currentPosition)
@@ -822,9 +815,9 @@ fun BottomSheetPlayer(
                     ) { title ->
                         Text(
                             text = title,
-                            style = MaterialTheme.typography.headlineSmall,
+                            style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
-                            maxLines = 2,
+                            maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             color = TextBackgroundColor,
                             modifier =
@@ -853,7 +846,7 @@ fun BottomSheetPlayer(
                         )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
 
                     if (mediaMetadata.artists.any { it.name.isNotBlank() }) {
                         val annotatedString = buildAnnotatedString {

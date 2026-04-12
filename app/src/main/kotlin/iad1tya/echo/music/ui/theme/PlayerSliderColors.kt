@@ -7,160 +7,80 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import iad1tya.echo.music.constants.PlayerBackgroundStyle
 
-/**
- * Player slider color configuration for consistent styling across all slider types
- * 
- * This object provides standardized color schemes for Default, Squiggly, and Slim sliders
- * used in the music player interface, ensuring visual consistency and proper contrast.
- */
 object PlayerSliderColors {
 
-    /**
-     * Standard slider colors for all slider types
-     * 
-     * @param activeColor Color for active track, ticks, and thumb
-     * @param playerBackground The player background style
-     * @param useDarkTheme Whether dark theme is being used
-     * @return SliderColors configuration
-     */
     @Composable
-    fun getSliderColors(
-        activeColor: Color,
+    private fun activeColorForBackground(
+        buttonColor: Color,
         playerBackground: PlayerBackgroundStyle,
-        useDarkTheme: Boolean
-    ): SliderColors {
-        val resolvedActiveColor = when (playerBackground) {
-            PlayerBackgroundStyle.DEFAULT -> if (useDarkTheme) Color.White else MaterialTheme.colorScheme.onSurface
+        useDarkTheme: Boolean,
+    ): Color {
+        return when (playerBackground) {
+            PlayerBackgroundStyle.DEFAULT -> if (useDarkTheme) Color.White else buttonColor
             PlayerBackgroundStyle.GRADIENT,
             PlayerBackgroundStyle.BLUR,
             PlayerBackgroundStyle.GLOW_ANIMATED -> Color.White
         }
+    }
 
-        val inactiveTrackColor = when (playerBackground) {
+    @Composable
+    private fun inactiveColorForBackground(
+        playerBackground: PlayerBackgroundStyle,
+        useDarkTheme: Boolean,
+    ): Color {
+        return when (playerBackground) {
             PlayerBackgroundStyle.DEFAULT -> {
                 if (useDarkTheme) {
-                    Color.White.copy(alpha = 0.24f)
+                    MaterialTheme.colorScheme.outline.copy(alpha = 0.28f)
                 } else {
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
                 }
             }
+
             PlayerBackgroundStyle.GRADIENT,
             PlayerBackgroundStyle.BLUR,
-            PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.28f)
-            }
+            PlayerBackgroundStyle.GLOW_ANIMATED -> Color.White.copy(alpha = 0.32f)
         }
-
-        return SliderDefaults.colors(
-            activeTrackColor = resolvedActiveColor,
-            activeTickColor = resolvedActiveColor,
-            thumbColor = resolvedActiveColor,
-            inactiveTrackColor = inactiveTrackColor,
-            inactiveTickColor = inactiveTrackColor,
-        )
     }
 
-    /**
-     * Default slider colors using button color scheme
-     * 
-     * @param buttonColor The active button color from player theme
-     * @param playerBackground The player background style
-     * @param useDarkTheme Whether dark theme is being used
-     * @return SliderColors configuration for default slider
-     */
     @Composable
     fun defaultSliderColors(
         buttonColor: Color,
         playerBackground: PlayerBackgroundStyle,
-        useDarkTheme: Boolean
+        useDarkTheme: Boolean,
     ): SliderColors {
-        return getSliderColors(
-            activeColor = buttonColor,
-            playerBackground = playerBackground,
-            useDarkTheme = useDarkTheme
+        val active = activeColorForBackground(buttonColor, playerBackground, useDarkTheme)
+        val inactive = inactiveColorForBackground(playerBackground, useDarkTheme)
+        return SliderDefaults.colors(
+            activeTrackColor = active,
+            activeTickColor = active,
+            thumbColor = active,
+            inactiveTrackColor = inactive,
+            inactiveTickColor = inactive,
         )
     }
 
-    /**
-     * Squiggly slider colors using button color scheme
-     * 
-     * @param buttonColor The active button color from player theme
-     * @param playerBackground The player background style
-     * @param useDarkTheme Whether dark theme is being used
-     * @return SliderColors configuration for squiggly slider
-     */
     @Composable
     fun squigglySliderColors(
         buttonColor: Color,
         playerBackground: PlayerBackgroundStyle,
-        useDarkTheme: Boolean
-    ): SliderColors {
-        return getSliderColors(
-            activeColor = buttonColor,
-            playerBackground = playerBackground,
-            useDarkTheme = useDarkTheme
-        )
-    }
+        useDarkTheme: Boolean,
+    ): SliderColors = defaultSliderColors(buttonColor, playerBackground, useDarkTheme)
 
-    /**
-     * Slim slider colors using button color scheme
-     * Note: Slim slider uses custom track component, so this provides base colors
-     * 
-     * @param buttonColor The active button color from player theme
-     * @param playerBackground The player background style
-     * @param useDarkTheme Whether dark theme is being used
-     * @return SliderColors configuration for slim slider
-     */
     @Composable
     fun slimSliderColors(
         buttonColor: Color,
         playerBackground: PlayerBackgroundStyle,
-        useDarkTheme: Boolean
+        useDarkTheme: Boolean,
     ): SliderColors {
-        val activeTrackColor = when (playerBackground) {
-            PlayerBackgroundStyle.DEFAULT -> if (useDarkTheme) Color.White else MaterialTheme.colorScheme.onSurface
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
-            PlayerBackgroundStyle.GLOW_ANIMATED -> Color.White
-        }
-
-        val inactiveTrackColor = when (playerBackground) {
-            PlayerBackgroundStyle.DEFAULT -> {
-                if (useDarkTheme) {
-                    Color.White.copy(alpha = 0.24f)
-                } else {
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
-                }
-            }
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.BLUR,
-            PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.28f)
-            }
-        }
-
+        val active = activeColorForBackground(buttonColor, playerBackground, useDarkTheme)
+        val inactive = inactiveColorForBackground(playerBackground, useDarkTheme)
         return SliderDefaults.colors(
-            activeTrackColor = activeTrackColor,
-            activeTickColor = activeTrackColor,
-            inactiveTrackColor = inactiveTrackColor,
-            inactiveTickColor = inactiveTrackColor,
+            activeTrackColor = active,
+            activeTickColor = active,
+            thumbColor = Color.Transparent,
+            inactiveTrackColor = inactive,
+            inactiveTickColor = inactive,
         )
-    }
-
-    /**
-     * Configuration constants for slider colors
-     */
-    object Config {
-        /** Alpha transparency for inactive track - subtle white appearance */
-        const val INACTIVE_TRACK_ALPHA = 0.15f
-        
-        /** Alpha transparency for inactive ticks */
-        const val INACTIVE_TICK_ALPHA = 0.2f
-        
-        /** Default active color when no theme color is available */
-        val DEFAULT_ACTIVE_COLOR = Color(0xFF1976D2)
-        
-        /** Default inactive color when no theme color is available */
-        val DEFAULT_INACTIVE_COLOR = Color.White.copy(alpha = INACTIVE_TRACK_ALPHA)
     }
 }
