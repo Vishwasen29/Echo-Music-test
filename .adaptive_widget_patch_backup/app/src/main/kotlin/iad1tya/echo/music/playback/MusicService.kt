@@ -204,7 +204,6 @@ import iad1tya.echo.music.utils.enumPreference
 import iad1tya.echo.music.utils.get
 import iad1tya.echo.music.utils.reportException
 import iad1tya.echo.music.widget.MusicWidgetProvider
-import iad1tya.echo.music.widget.AdaptiveMusicWidgetProvider
 import iad1tya.echo.music.widget.ScalableMusicWidgetProvider
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -1017,12 +1016,6 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                     ScalableMusicWidgetProvider.updateProgress(
-                        context = this@MusicService,
-                        positionMs = safePosition,
-                        durationMs = safeDuration,
-                        isPlaying = player.isPlaying,
-                    )
-                    AdaptiveMusicWidgetProvider.updateProgress(
                         context = this@MusicService,
                         positionMs = safePosition,
                         durationMs = safeDuration,
