@@ -204,7 +204,6 @@ import iad1tya.echo.music.utils.enumPreference
 import iad1tya.echo.music.utils.get
 import iad1tya.echo.music.utils.reportException
 import iad1tya.echo.music.widget.MusicWidgetProvider
-import iad1tya.echo.music.widget.WideMusicWidgetProvider
 import iad1tya.echo.music.widget.AdaptiveMusicWidgetProvider
 import iad1tya.echo.music.widget.ScalableMusicWidgetProvider
 import dagger.hilt.android.AndroidEntryPoint
@@ -1012,12 +1011,6 @@ class MusicService :
                     }
                     val safePosition = player.currentPosition.coerceAtLeast(0L)
                     MusicWidgetProvider.updateProgress(
-                        context = this@MusicService,
-                        positionMs = safePosition,
-                        durationMs = safeDuration,
-                        isPlaying = player.isPlaying,
-                    )
-                    WideMusicWidgetProvider.updateProgress(
                         context = this@MusicService,
                         positionMs = safePosition,
                         durationMs = safeDuration,
@@ -3263,15 +3256,6 @@ class MusicService :
             repeatMode = player.repeatMode,
             shuffleEnabled = player.shuffleModeEnabled,
             trackCounter = trackCounter,
-        )
-        WideMusicWidgetProvider.updateWidget(
-            context = this,
-            songTitle = metadata?.title,
-            artistName = metadata?.artists?.joinToString(", ") { it.name },
-            albumArtUrl = metadata?.thumbnailUrl,
-            isPlaying = player.isPlaying,
-            positionMs = safePosition,
-            durationMs = safeDuration,
         )
         runCatching {
             ScalableMusicWidgetProvider.updateWidget(

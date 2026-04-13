@@ -328,19 +328,6 @@
                 android:resource="@xml/widget_info_adaptive" />
         </receiver>
 
-    
-        <receiver
-            android:name=".widget.WideMusicWidgetProvider"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_info_4x1" />
-        </receiver>
-
     </application>
 
 </manifest>
