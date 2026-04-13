@@ -815,21 +815,20 @@ fun BottomSheetPlayer(
                     }
                     Spacer(Modifier.height(8.dp))
 
-                    val displayTitle = remember(mediaMetadata.title, currentSong?.song?.title) {
-                        mediaMetadata.title.takeIf { it.isNotBlank() }
-                            ?: currentSong?.song?.title
-                            ?: ""
-                    }
-
-                    if (displayTitle.isNotBlank()) {
+                    AnimatedContent(
+                        targetState = mediaMetadata.title,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "",
+                    ) { title ->
                         Text(
-                            text = displayTitle,
+                            text = title,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             color = TextBackgroundColor,
-                            modifier = Modifier
+                            modifier =
+                            Modifier
                                 .fillMaxWidth()
                                 .basicMarquee(iterations = 1, initialDelayMillis = 3000, velocity = 30.dp)
                                 .combinedClickable(
@@ -844,17 +843,18 @@ fun BottomSheetPlayer(
                                     },
                                     onLongClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        val clip = ClipData.newPlainText("Copied Title", displayTitle)
+                                        val clip = ClipData.newPlainText("Copied Title", title)
                                         clipboardManager.setPrimaryClip(clip)
                                         Toast
                                             .makeText(context, "Copied Title", Toast.LENGTH_SHORT)
                                             .show()
                                     }
-                                ),
+                                )
+                            ,
                         )
-
-                        Spacer(Modifier.height(8.dp))
                     }
+
+                    Spacer(Modifier.height(8.dp))
 
                     if (mediaMetadata.artists.any { it.name.isNotBlank() }) {
                         val annotatedString = buildAnnotatedString {
@@ -937,29 +937,25 @@ fun BottomSheetPlayer(
 
                     Spacer(Modifier.height(8.dp))
 
-                    val bitrateText = currentFormat
-                        ?.bitrate
-                        ?.takeIf { it > 0 }
-                        ?.let { "${it / 1000} Kbps" }
+                    val playerAudioInfo = currentFormat?.let { format ->
+                        val source = if (format.itag < 0) "JioSaavn" else "YouTube Music"
+                        val bitrate = format.bitrate.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
+                        listOfNotNull(source, bitrate).joinToString(" • ")
+                    } ?: "Source pending"
 
                     val trackCounterText = playerConnection.service.currentTrackCounterLabel()
                         ?.replace("/", " of ")
 
-                    val playerInfoLine = listOfNotNull(bitrateText, trackCounterText)
-                        .joinToString(" • ")
-
-                    if (playerInfoLine.isNotBlank()) {
-                        Text(
-                            text = playerInfoLine,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = TextBackgroundColor.copy(alpha = 0.85f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(end = 12.dp),
-                        )
-                    }
+                    Text(
+                        text = listOfNotNull(playerAudioInfo, trackCounterText).joinToString(" • "),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextBackgroundColor.copy(alpha = 0.85f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 12.dp),
+                    )
 
                 if (showInlineLyrics) {
                     Box(
