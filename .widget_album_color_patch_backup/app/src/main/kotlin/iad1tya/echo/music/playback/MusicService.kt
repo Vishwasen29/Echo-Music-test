@@ -3222,7 +3222,7 @@ class MusicService :
     }
 
     fun currentTrackCounterLabel(): String? =
-        currentTrackCounterCompact()
+        currentTrackCounterCompact()?.let { "Track $it" }
 
     private fun currentNotificationActionLabel(base: String): String =
         currentTrackCounterCompact()?.let { "$base • $it" } ?: base
@@ -3246,24 +3246,20 @@ class MusicService :
             isPlaying = player.isPlaying,
             positionMs = safePosition,
             durationMs = safeDuration,
+            trackCounter = trackCounter,
+        )
+        ScalableMusicWidgetProvider.updateWidget(
+            context = this,
+            songTitle = metadata?.title,
+            artistName = artistLine,
+            albumArtUrl = metadata?.thumbnailUrl,
+            isPlaying = player.isPlaying,
+            positionMs = safePosition,
+            durationMs = safeDuration,
             repeatMode = player.repeatMode,
             shuffleEnabled = player.shuffleModeEnabled,
             trackCounter = trackCounter,
         )
-        runCatching {
-            ScalableMusicWidgetProvider.updateWidget(
-                context = this,
-                songTitle = metadata?.title,
-                artistName = artistLine,
-                albumArtUrl = metadata?.thumbnailUrl,
-                isPlaying = player.isPlaying,
-                positionMs = safePosition,
-                durationMs = safeDuration,
-                repeatMode = player.repeatMode,
-                shuffleEnabled = player.shuffleModeEnabled,
-                trackCounter = trackCounter,
-            )
-        }
     }
 
 

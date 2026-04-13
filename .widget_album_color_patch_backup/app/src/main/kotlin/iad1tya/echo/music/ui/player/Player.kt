@@ -815,69 +815,43 @@ fun BottomSheetPlayer(
                     }
                     Spacer(Modifier.height(8.dp))
 
-                    val bitrateText = currentFormat
-                        ?.bitrate
-                        ?.takeIf { it > 0 }
-                        ?.let { "${it / 1000} Kbps" }
-
                     val displayTitle = remember(mediaMetadata.title, currentSong?.song?.title) {
-                        listOf(
-                            mediaMetadata.title.takeIf { it.isNotBlank() },
-                            currentSong?.song?.title?.takeIf { it.isNotBlank() },
-                        ).firstOrNull() ?: ""
+                        mediaMetadata.title.takeIf { it.isNotBlank() }
+                            ?: currentSong?.song?.title
+                            ?: ""
                     }
 
-                    if (displayTitle.isNotBlank() || !bitrateText.isNullOrBlank()) {
-                        Row(
+                    if (displayTitle.isNotBlank()) {
+                        Text(
+                            text = displayTitle,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            color = TextBackgroundColor,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(end = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Text(
-                                text = displayTitle.ifBlank { "Unknown title" },
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                color = TextBackgroundColor,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .combinedClickable(
-                                        enabled = true,
-                                        indication = null,
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        onClick = {
-                                            if (mediaMetadata.album != null) {
-                                                navController.navigate("album/${mediaMetadata.album.id}")
-                                                state.collapseSoft()
-                                            }
-                                        },
-                                        onLongClick = {
-                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                            val clip = ClipData.newPlainText("Copied Title", displayTitle.ifBlank { "Unknown title" })
-                                            clipboardManager.setPrimaryClip(clip)
-                                            Toast
-                                                .makeText(context, "Copied Title", Toast.LENGTH_SHORT)
-                                                .show()
+                                .basicMarquee(iterations = 1, initialDelayMillis = 3000, velocity = 30.dp)
+                                .combinedClickable(
+                                    enabled = true,
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    onClick = {
+                                        if (mediaMetadata.album != null) {
+                                            navController.navigate("album/${mediaMetadata.album.id}")
+                                            state.collapseSoft()
                                         }
-                                    ),
-                            )
-
-                            if (!bitrateText.isNullOrBlank()) {
-                                Text(
-                                    text = bitrateText,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextBackgroundColor,
-                                    maxLines = 1,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(TextBackgroundColor.copy(alpha = 0.14f))
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                )
-                            }
-                        }
+                                    },
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val clip = ClipData.newPlainText("Copied Title", displayTitle)
+                                        clipboardManager.setPrimaryClip(clip)
+                                        Toast
+                                            .makeText(context, "Copied Title", Toast.LENGTH_SHORT)
+                                            .show()
+                                    }
+                                ),
+                        )
 
                         Spacer(Modifier.height(8.dp))
                     }
@@ -963,11 +937,20 @@ fun BottomSheetPlayer(
 
                     Spacer(Modifier.height(8.dp))
 
-                    val trackCounterText = playerConnection.service.currentTrackCounterCompact()
+                    val bitrateText = currentFormat
+                        ?.bitrate
+                        ?.takeIf { it > 0 }
+                        ?.let { "${it / 1000} Kbps" }
 
-                    if (!trackCounterText.isNullOrBlank()) {
+                    val trackCounterText = playerConnection.service.currentTrackCounterLabel()
+                        ?.replace("/", " of ")
+
+                    val playerInfoLine = listOfNotNull(bitrateText, trackCounterText)
+                        .joinToString(" • ")
+
+                    if (playerInfoLine.isNotBlank()) {
                         Text(
-                            text = trackCounterText,
+                            text = playerInfoLine,
                             style = MaterialTheme.typography.labelLarge,
                             color = TextBackgroundColor.copy(alpha = 0.85f),
                             maxLines = 1,
