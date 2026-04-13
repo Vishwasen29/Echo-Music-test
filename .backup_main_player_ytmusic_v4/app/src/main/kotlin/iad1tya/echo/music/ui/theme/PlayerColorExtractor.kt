@@ -105,7 +105,22 @@ object PlayerColorExtractor {
         val c3 = if (lightVibrant != null) getColor(lightVibrant) else getColor(dominant).copy(alpha = 0.6f)
         val c4 = if (dominant != null && dominant != c1) getColor(dominant) else c1.copy(red = c1.red * 0.8f)
 
-        listOf(c1, c2, c3, c4)
+        listOf(
+            c1.copy(alpha = 0.96f),
+            Color(
+                red = (c2.red * 0.82f).coerceIn(0f, 1f),
+                green = (c2.green * 0.82f).coerceIn(0f, 1f),
+                blue = (c2.blue * 0.82f).coerceIn(0f, 1f),
+                alpha = 0.88f,
+            ),
+            Color(
+                red = (c3.red * 0.58f).coerceIn(0f, 1f),
+                green = (c3.green * 0.58f).coerceIn(0f, 1f),
+                blue = (c3.blue * 0.58f).coerceIn(0f, 1f),
+                alpha = 0.76f,
+            ),
+            Color(0xFF040404),
+        )
     }
 
     /**
@@ -141,7 +156,7 @@ object PlayerColorExtractor {
         // Increase saturation for more vivid colors
         hsv[1] = (hsv[1] * saturationFactor).coerceAtMost(1.0f)
         // Adjust brightness for better visibility
-        hsv[2] = (hsv[2] * 0.78f).coerceIn(0.26f, 0.72f)
+        hsv[2] = (hsv[2] * 0.9f).coerceIn(0.4f, 0.85f)
         
         return Color(android.graphics.Color.HSVToColor(hsv))
     }

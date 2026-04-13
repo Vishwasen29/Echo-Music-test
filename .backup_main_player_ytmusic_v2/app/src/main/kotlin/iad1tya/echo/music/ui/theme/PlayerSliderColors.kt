@@ -38,13 +38,13 @@ object PlayerSliderColors {
                 }
             }
             PlayerBackgroundStyle.GRADIENT -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
             PlayerBackgroundStyle.BLUR -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
             PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
         }
         
@@ -122,13 +122,13 @@ object PlayerSliderColors {
                 }
             }
             PlayerBackgroundStyle.GRADIENT -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
             PlayerBackgroundStyle.BLUR -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
             PlayerBackgroundStyle.GLOW_ANIMATED -> {
-                Color.White.copy(alpha = 0.4f)
+                Color.White.copy(alpha = 0.24f)
             }
         }
         
@@ -144,7 +144,7 @@ object PlayerSliderColors {
      */
     object Config {
         /** Alpha transparency for inactive track - subtle white appearance */
-        const val INACTIVE_TRACK_ALPHA = 0.15f
+        const val INACTIVE_TRACK_ALPHA = 0.24f
         
         /** Alpha transparency for inactive ticks */
         const val INACTIVE_TICK_ALPHA = 0.2f

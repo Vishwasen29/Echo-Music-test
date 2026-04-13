@@ -141,7 +141,7 @@ object PlayerColorExtractor {
         // Increase saturation for more vivid colors
         hsv[1] = (hsv[1] * saturationFactor).coerceAtMost(1.0f)
         // Adjust brightness for better visibility
-        hsv[2] = (hsv[2] * 0.78f).coerceIn(0.26f, 0.72f)
+        hsv[2] = (hsv[2] * 0.9f).coerceIn(0.4f, 0.85f)
         
         return Color(android.graphics.Color.HSVToColor(hsv))
     }
