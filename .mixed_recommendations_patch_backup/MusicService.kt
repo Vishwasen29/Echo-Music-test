@@ -380,16 +380,6 @@ class MusicService :
     private var lastPlaybackSpeed = 1.0f
 
     val automixItems = MutableStateFlow<List<MediaItem>>(emptyList())
-    data class PlayerRecommendation(
-        val title: String,
-        val artistsLine: String,
-        val mediaItem: MediaItem,
-        val matchedYoutubeId: String,
-        val source: String,
-    )
-
-    val playerRecommendations = MutableStateFlow<List<PlayerRecommendation>>(emptyList())
-
 
     private var consecutivePlaybackErr = 0
     private var retryJob: Job? = null
@@ -1307,137 +1297,6 @@ class MusicService :
         }
     }
 
-
-    private fun normalizeRecommendationKey(title: String, artists: String): String {
-        return (title + " " + artists)
-            .lowercase()
-            .replace(Regex("[^\p{L}\p{N} ]"), " ")
-            .replace(Regex("\s+"), " ")
-            .trim()
-    }
-
-    private fun recommendationMatchScore(
-        title: String,
-        artists: List<String>,
-        duration: Int?,
-        song: SongItem,
-    ): Int {
-        val wantedTitle = title.lowercase().replace(Regex("[^\p{L}\p{N} ]"), " ").replace(Regex("\s+"), " ").trim()
-        val foundTitle = song.title.lowercase().replace(Regex("[^\p{L}\p{N} ]"), " ").replace(Regex("\s+"), " ").trim()
-        val wantedPrimaryArtist = artists.firstOrNull().orEmpty().lowercase().trim()
-        val foundArtists = song.artists.map { it.name.lowercase().trim() }
-
-        var score = 0
-        when {
-            foundTitle == wantedTitle -> score += 120
-            foundTitle.contains(wantedTitle) || wantedTitle.contains(foundTitle) -> score += 75
-            else -> {
-                val wantedTokens = wantedTitle.split(" ").filter { it.isNotBlank() }.toSet()
-                val foundTokens = foundTitle.split(" ").filter { it.isNotBlank() }.toSet()
-                val overlap = wantedTokens.intersect(foundTokens).size
-                score += overlap * 12
-            }
-        }
-
-        if (wantedPrimaryArtist.isNotBlank()) {
-            score += when {
-                foundArtists.firstOrNull() == wantedPrimaryArtist -> 80
-                foundArtists.any { it.contains(wantedPrimaryArtist) || wantedPrimaryArtist.contains(it) } -> 50
-                else -> -40
-            }
-        }
-
-        if (duration != null && song.duration > 0) {
-            val diff = kotlin.math.abs(song.duration - duration)
-            score += when {
-                diff <= 2 -> 24
-                diff <= 5 -> 18
-                diff <= 10 -> 10
-                diff <= 20 -> 0
-                else -> -18
-            }
-        }
-
-        return score
-    }
-
-    private suspend fun fetchYouTubeRecommendations(mediaId: String): List<PlayerRecommendation> {
-        val nextResult = YouTube.next(WatchEndpoint(videoId = mediaId)).getOrNull() ?: return emptyList()
-        val relatedEndpoint = nextResult.relatedEndpoint ?: return emptyList()
-        val relatedPage = YouTube.related(relatedEndpoint).getOrNull() ?: return emptyList()
-
-        return relatedPage.songs.take(6).map { song ->
-            PlayerRecommendation(
-                title = song.title,
-                artistsLine = song.artists.joinToString(", ") { it.name },
-                mediaItem = song.toMediaItem(),
-                matchedYoutubeId = song.id,
-                source = "YouTube Music",
-            )
-        }
-    }
-
-    private suspend fun fetchSaavnRecommendations(mediaId: String): List<PlayerRecommendation> {
-        val seed = currentMediaMetadata.value?.takeIf { it.id == mediaId }
-            ?: database.song(mediaId).first()?.toMediaMetadata()
-            ?: return emptyList()
-
-        val saavnRecommendations = SaavnAudioResolver.recommendations(seed, 6).getOrNull().orEmpty()
-        val resolved = mutableListOf<PlayerRecommendation>()
-
-        saavnRecommendations.forEach { recommendation ->
-            val query = listOf(recommendation.title, recommendation.artists.firstOrNull().orEmpty())
-                .filter { it.isNotBlank() }
-                .joinToString(" ")
-                .trim()
-
-            val match = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
-                .getOrNull()
-                ?.items
-                ?.filterIsInstance<SongItem>()
-                ?.maxByOrNull { song ->
-                    recommendationMatchScore(
-                        title = recommendation.title,
-                        artists = recommendation.artists,
-                        duration = recommendation.duration,
-                        song = song,
-                    )
-                } ?: return@forEach
-
-            resolved += PlayerRecommendation(
-                title = match.title,
-                artistsLine = match.artists.joinToString(", ") { it.name },
-                mediaItem = match.toMediaItem(),
-                matchedYoutubeId = match.id,
-                source = "JioSaavn",
-            )
-        }
-
-        return resolved
-    }
-
-    private suspend fun refreshPlayerRecommendations(mediaId: String) {
-        val youtube = fetchYouTubeRecommendations(mediaId)
-        val saavn = fetchSaavnRecommendations(mediaId)
-
-        val merged = linkedMapOf<String, PlayerRecommendation>()
-        (youtube + saavn).forEach { recommendation ->
-            merged.putIfAbsent(
-                normalizeRecommendationKey(recommendation.title, recommendation.artistsLine),
-                recommendation,
-            )
-        }
-        playerRecommendations.value = merged.values.take(10).toList()
-    }
-
-    suspend fun addRecommendationToYoutubePlaylist(
-        playlistId: String,
-        matchedYoutubeId: String,
-    ): Result<String> = runCatching {
-        YouTube.addToPlaylist(playlistId, matchedYoutubeId).getOrThrow()
-        matchedYoutubeId
-    }
-
     fun playQueue(
         queue: Queue,
         playWhenReady: Boolean = true,
@@ -1582,7 +1441,6 @@ class MusicService :
 
     fun clearAutomix() {
         automixItems.value = emptyList()
-        playerRecommendations.value = emptyList()
     }
 
     fun playNext(items: List<MediaItem>) {
@@ -2146,11 +2004,6 @@ class MusicService :
         
         // Update widget
         updateWidget()
-        mediaItem?.mediaId?.let { recommendationMediaId ->
-            scope.launch(SilentHandler) {
-                refreshPlayerRecommendations(recommendationMediaId)
-            }
-        }
 
         val queue = player.mediaItems.mapNotNull { it.metadata }
         if (queue.isNotEmpty()) {

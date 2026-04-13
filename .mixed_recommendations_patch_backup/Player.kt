@@ -246,7 +246,6 @@ fun BottomSheetPlayer(
     val currentFormat by playerConnection.currentFormat.collectAsState(initial = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
     val automix by playerConnection.service.automixItems.collectAsState()
-    val playerRecommendations by playerConnection.service.playerRecommendations.collectAsState()
     val repeatMode by playerConnection.repeatMode.collectAsState()
     val isCrossfading by playerConnection.service.isCrossfading.collectAsState()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsState()
@@ -1183,54 +1182,7 @@ fun BottomSheetPlayer(
                 Spacer(Modifier.height(8.dp))
             }
 
-            if (playerRecommendations.isNotEmpty()) {
-                Text(
-                    text = "Recommended for you",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = TextBackgroundColor,
-                    modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                )
-                Spacer(Modifier.height(8.dp))
-                androidx.compose.foundation.lazy.LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = PlayerHorizontalPadding),
-                ) {
-                    items(
-                        items = playerRecommendations.take(8),
-                        key = { it.matchedYoutubeId },
-                    ) { recommendation ->
-                        FilledTonalButton(
-                            onClick = {
-                                playerConnection.service.playNext(listOf(recommendation.mediaItem))
-                            },
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.Start,
-                                modifier = Modifier.width(220.dp),
-                            ) {
-                                Text(
-                                    text = recommendation.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    text = recommendation.artistsLine,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                                Text(
-                                    text = recommendation.source,
-                                    style = MaterialTheme.typography.labelSmall,
-                                )
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            } else {
-                Spacer(Modifier.height(12.dp))
-            }
+            Spacer(Modifier.height(12.dp))
 
             when (sliderStyle) {
                 SliderStyle.DEFAULT -> {

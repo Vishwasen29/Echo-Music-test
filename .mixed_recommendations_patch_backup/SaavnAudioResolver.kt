@@ -34,11 +34,6 @@ object SaavnAudioResolver {
     )
 
     private val detailPaths = listOf(
-    private val suggestionPaths = listOf(
-        "/api/songs/%s/suggestions",
-        "/songs/%s/suggestions",
-    )
-
         "/api/songs/%s",
         "/songs/%s",
     )
@@ -79,15 +74,6 @@ object SaavnAudioResolver {
         val quality: String,
         val url: String,
         val bitrate: Int,
-    )
-
-    data class RecommendationSeed(
-        val title: String,
-        val artists: List<String>,
-        val duration: Int?,
-        val albumName: String?,
-        val language: String?,
-        val sourceSongId: String,
     )
 
     private data class Candidate(
@@ -141,82 +127,6 @@ object SaavnAudioResolver {
                 matchedArtists = hydrated.artists,
             )
         }
-    }
-
-
-    suspend fun recommendations(
-        mediaMetadata: MediaMetadata,
-        limit: Int = 8,
-    ): Result<List<RecommendationSeed>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val resolved = resolve(mediaMetadata, AudioQuality.AUTO).getOrNull()
-            val baseCandidates = resolved?.songId?.let(::fetchSuggestions).orEmpty()
-            val fallbackCandidates = if (baseCandidates.isEmpty()) {
-                searchFallbackRecommendations(mediaMetadata)
-            } else {
-                emptyList()
-            }
-
-            val requestedTitle = normalizeTitleCore(mediaMetadata.title)
-            val requestedPrimaryArtist = normalizeArtist(mediaMetadata.artists.firstOrNull()?.name.orEmpty())
-
-            (baseCandidates + fallbackCandidates)
-                .distinctBy { it.id }
-                .filter { candidate ->
-                    val candidateTitle = normalizeTitleCore(candidate.title)
-                    val candidatePrimaryArtist = normalizeArtist(candidate.artists.firstOrNull().orEmpty())
-                    !(candidateTitle == requestedTitle && candidatePrimaryArtist == requestedPrimaryArtist)
-                }
-                .sortedWith(
-                    compareByDescending<Candidate> { score(it, mediaMetadata) }
-                        .thenByDescending { qualityScore(it.downloadLinks) }
-                )
-                .take(limit)
-                .map { candidate ->
-                    RecommendationSeed(
-                        title = candidate.title,
-                        artists = candidate.artists,
-                        duration = candidate.duration,
-                        albumName = candidate.albumName,
-                        language = candidate.language,
-                        sourceSongId = candidate.id,
-                    )
-                }
-        }
-    }
-
-    private fun fetchSuggestions(songId: String): List<Candidate> {
-        val encodedId = URLEncoder.encode(songId, Charsets.UTF_8.name())
-        val all = linkedMapOf<String, Candidate>()
-        for (base in baseUrls) {
-            for (template in suggestionPaths) {
-                val url = base.trimEnd('/') + template.format(encodedId)
-                val json = fetchJson(url) ?: continue
-                parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-            }
-        }
-        return all.values.toList()
-    }
-
-    private fun searchFallbackRecommendations(seed: MediaMetadata): List<Candidate> {
-        val title = seed.title.trim()
-        val primaryArtist = seed.artists.firstOrNull()?.name?.trim().orEmpty()
-        val album = seed.album?.title?.trim().orEmpty()
-
-        val queries = linkedSetOf(
-            listOf(primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
-            listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
-            primaryArtist,
-            album,
-        ).filter { it.isNotBlank() }
-
-        val all = linkedMapOf<String, Candidate>()
-        queries.forEach { query ->
-            search(query).forEach { candidate ->
-                all.putIfAbsent(candidate.id, candidate)
-            }
-        }
-        return all.values.toList()
     }
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
