@@ -105,22 +105,7 @@ object PlayerColorExtractor {
         val c3 = if (lightVibrant != null) getColor(lightVibrant) else getColor(dominant).copy(alpha = 0.6f)
         val c4 = if (dominant != null && dominant != c1) getColor(dominant) else c1.copy(red = c1.red * 0.8f)
 
-        listOf(
-            c1.copy(alpha = 0.96f),
-            Color(
-                red = (c2.red * 0.82f).coerceIn(0f, 1f),
-                green = (c2.green * 0.82f).coerceIn(0f, 1f),
-                blue = (c2.blue * 0.82f).coerceIn(0f, 1f),
-                alpha = 0.88f,
-            ),
-            Color(
-                red = (c3.red * 0.58f).coerceIn(0f, 1f),
-                green = (c3.green * 0.58f).coerceIn(0f, 1f),
-                blue = (c3.blue * 0.58f).coerceIn(0f, 1f),
-                alpha = 0.76f,
-            ),
-            Color(0xFF040404),
-        )
+        listOf(c1, c2, c3, c4)
     }
 
     /**

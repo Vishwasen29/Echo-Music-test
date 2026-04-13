@@ -209,17 +209,10 @@ fun BottomSheetPlayer(
         key = UseNewPlayerDesignKey,
         defaultValue = true
     )
-    val playerBackgroundPref by rememberEnumPreference(
+    val playerBackground by rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.GRADIENT
+        defaultValue = PlayerBackgroundStyle.BLUR
     )
-    val playerBackground = remember(playerBackgroundPref) {
-        when (playerBackgroundPref) {
-            PlayerBackgroundStyle.DEFAULT,
-            PlayerBackgroundStyle.BLUR -> PlayerBackgroundStyle.GRADIENT
-            else -> playerBackgroundPref
-        }
-    }
     val playerButtonsStyle by rememberEnumPreference(
         key = PlayerButtonsStyleKey,
         defaultValue = PlayerButtonsStyle.DEFAULT
@@ -250,14 +243,13 @@ fun BottomSheetPlayer(
     val isPlaying by playerConnection.isPlaying.collectAsState()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
     val currentSong by playerConnection.currentSong.collectAsState(initial = null)
-    val currentFormat by database.format(mediaMetadata?.id).collectAsState(initial = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
     val automix by playerConnection.service.automixItems.collectAsState()
     val repeatMode by playerConnection.repeatMode.collectAsState()
     val isCrossfading by playerConnection.service.isCrossfading.collectAsState()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsState()
     val canSkipNext by playerConnection.canSkipNext.collectAsState()
-    val sliderStyle = SliderStyle.SLIM
+    val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
 
     var position by rememberSaveable(playbackState) {
         mutableLongStateOf(playerConnection.player.currentPosition)
@@ -815,77 +807,45 @@ fun BottomSheetPlayer(
                     }
                     Spacer(Modifier.height(8.dp))
 
-                    val bitrateText = currentFormat
-                        ?.bitrate
-                        ?.takeIf { it > 0 }
-                        ?.let { "${it / 1000} Kbps" }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(end = 12.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            AnimatedContent(
-                                targetState = mediaMetadata.title,
-                                transitionSpec = { fadeIn() togetherWith fadeOut() },
-                                label = "",
-                            ) { title ->
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    color = TextBackgroundColor,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .basicMarquee(iterations = 1, initialDelayMillis = 2600, velocity = 34.dp)
-                                        .combinedClickable(
-                                            enabled = true,
-                                            indication = null,
-                                            interactionSource = remember { MutableInteractionSource() },
-                                            onClick = {
-                                                if (mediaMetadata.album != null) {
-                                                    navController.navigate("album/${mediaMetadata.album.id}")
-                                                    state.collapseSoft()
-                                                }
-                                            },
-                                            onLongClick = {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                val clip = ClipData.newPlainText("Copied Title", title)
-                                                clipboardManager.setPrimaryClip(clip)
-                                                Toast
-                                                    .makeText(context, "Copied Title", Toast.LENGTH_SHORT)
-                                                    .show()
-                                            }
-                                        ),
+                    AnimatedContent(
+                        targetState = mediaMetadata.title,
+                        transitionSpec = { fadeIn() togetherWith fadeOut() },
+                        label = "",
+                    ) { title ->
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = TextBackgroundColor,
+                            modifier =
+                            Modifier
+                                .basicMarquee(iterations = 1, initialDelayMillis = 3000, velocity = 30.dp)
+                                .combinedClickable(
+                                    enabled = true,
+                                    indication = null,
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    onClick = {
+                                        if (mediaMetadata.album != null) {
+                                            navController.navigate("album/${mediaMetadata.album.id}")
+                                            state.collapseSoft()
+                                        }
+                                    },
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        val clip = ClipData.newPlainText("Copied Title", title)
+                                        clipboardManager.setPrimaryClip(clip)
+                                        Toast
+                                            .makeText(context, "Copied Title", Toast.LENGTH_SHORT)
+                                            .show()
+                                    }
                                 )
-                            }
-                        }
-
-                        bitrateText?.let { bitrate ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(14.dp))
-                                    .background(TextBackgroundColor.copy(alpha = 0.14f))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp),
-                            ) {
-                                Text(
-                                    text = bitrate,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextBackgroundColor.copy(alpha = 0.92f),
-                                    maxLines = 1,
-                                )
-                            }
-                        }
+                            ,
+                        )
                     }
 
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
 
                     if (mediaMetadata.artists.any { it.name.isNotBlank() }) {
                         val annotatedString = buildAnnotatedString {
@@ -965,29 +925,6 @@ fun BottomSheetPlayer(
                         }
                     }
                 }
-
-                    val trackCounterText = runCatching {
-                        playerConnection.service.javaClass
-                            .getMethod("currentTrackCounterCompact")
-                            .invoke(playerConnection.service) as? String
-                    }.getOrNull() ?: run {
-                        val currentIndex = playerConnection.player.currentMediaItemIndex
-                        val total = playerConnection.player.mediaItemCount
-                        if (currentIndex >= 0 && total > 0) "${currentIndex + 1}/$total" else null
-                    }
-
-                    trackCounterText?.let { counter ->
-                        Text(
-                            text = counter,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = TextBackgroundColor.copy(alpha = 0.78f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp, end = 12.dp),
-                        )
-                    }
 
                 if (showInlineLyrics) {
                     Box(
