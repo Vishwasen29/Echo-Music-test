@@ -34,13 +34,13 @@ object SaavnAudioResolver {
     )
 
     private val detailPaths = listOf(
-        "/api/songs/%s",
-        "/songs/%s",
-    )
-
     private val suggestionPaths = listOf(
         "/api/songs/%s/suggestions",
         "/songs/%s/suggestions",
+    )
+
+        "/api/songs/%s",
+        "/songs/%s",
     )
 
     private enum class ScriptFamily {
@@ -75,6 +75,12 @@ object SaavnAudioResolver {
         val matchedArtists: List<String>,
     )
 
+    private data class DownloadLink(
+        val quality: String,
+        val url: String,
+        val bitrate: Int,
+    )
+
     data class RecommendationSeed(
         val title: String,
         val artists: List<String>,
@@ -82,12 +88,6 @@ object SaavnAudioResolver {
         val albumName: String?,
         val language: String?,
         val sourceSongId: String,
-    )
-
-    private data class DownloadLink(
-        val quality: String,
-        val url: String,
-        val bitrate: Int,
     )
 
     private data class Candidate(
@@ -143,6 +143,7 @@ object SaavnAudioResolver {
         }
     }
 
+
     suspend fun recommendations(
         mediaMetadata: MediaMetadata,
         limit: Int = 8,
@@ -182,6 +183,40 @@ object SaavnAudioResolver {
                     )
                 }
         }
+    }
+
+    private fun fetchSuggestions(songId: String): List<Candidate> {
+        val encodedId = URLEncoder.encode(songId, Charsets.UTF_8.name())
+        val all = linkedMapOf<String, Candidate>()
+        for (base in baseUrls) {
+            for (template in suggestionPaths) {
+                val url = base.trimEnd('/') + template.format(encodedId)
+                val json = fetchJson(url) ?: continue
+                parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
+            }
+        }
+        return all.values.toList()
+    }
+
+    private fun searchFallbackRecommendations(seed: MediaMetadata): List<Candidate> {
+        val title = seed.title.trim()
+        val primaryArtist = seed.artists.firstOrNull()?.name?.trim().orEmpty()
+        val album = seed.album?.title?.trim().orEmpty()
+
+        val queries = linkedSetOf(
+            listOf(primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            primaryArtist,
+            album,
+        ).filter { it.isNotBlank() }
+
+        val all = linkedMapOf<String, Candidate>()
+        queries.forEach { query ->
+            search(query).forEach { candidate ->
+                all.putIfAbsent(candidate.id, candidate)
+            }
+        }
+        return all.values.toList()
     }
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
@@ -232,40 +267,6 @@ object SaavnAudioResolver {
             }
         }
         return null
-    }
-
-    private fun fetchSuggestions(songId: String): List<Candidate> {
-        val encodedId = URLEncoder.encode(songId, Charsets.UTF_8.name())
-        val all = linkedMapOf<String, Candidate>()
-        for (base in baseUrls) {
-            for (template in suggestionPaths) {
-                val url = base.trimEnd('/') + template.format(encodedId)
-                val json = fetchJson(url) ?: continue
-                parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-            }
-        }
-        return all.values.toList()
-    }
-
-    private fun searchFallbackRecommendations(seed: MediaMetadata): List<Candidate> {
-        val title = seed.title.trim()
-        val primaryArtist = seed.artists.firstOrNull()?.name?.trim().orEmpty()
-        val album = seed.album?.title?.trim().orEmpty()
-
-        val queries = linkedSetOf(
-            listOf(primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
-            listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
-            primaryArtist,
-            album,
-        ).filter { it.isNotBlank() }
-
-        val all = linkedMapOf<String, Candidate>()
-        queries.forEach { query ->
-            search(query).forEach { candidate ->
-                all.putIfAbsent(candidate.id, candidate)
-            }
-        }
-        return all.values.toList()
     }
 
     private fun fetchJson(url: String): JSONObject? {
@@ -583,28 +584,28 @@ object SaavnAudioResolver {
 
     private fun normalizeArtist(value: String): String {
         return normalizeBasic(value)
-            .replace(Regex("\b(feat|featuring|ft)\b"), " ")
-            .replace(Regex("\s+"), " ")
+            .replace(Regex("\\b(feat|featuring|ft)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
     private fun normalizeTitleCore(value: String): String {
         return normalizeBasic(value)
-            .replace(Regex("\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"), " ")
-            .replace(Regex("\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"), " ")
-            .replace(Regex("\b(feat|featuring|ft)\b.*$"), " ")
-            .replace(Regex("\b(song|full song|official music video|official video|lyric video|audio)\b"), " ")
-            .replace(Regex("\s+"), " ")
+            .replace(Regex("\\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\\)"), " ")
+            .replace(Regex("\\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\\]"), " ")
+            .replace(Regex("\\b(feat|featuring|ft)\\b.*$"), " ")
+            .replace(Regex("\\b(song|full song|official music video|official video|lyric video|audio)\\b"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
     private fun normalizeBasic(value: String): String {
         val stripped = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("\p{Mn}+"), "")
+            .replace(Regex("\\p{Mn}+"), "")
         return stripped
             .replace('&', ' ')
-            .replace(Regex("[^\p{L}\p{N} ]"), " ")
-            .replace(Regex("\s+"), " ")
+            .replace(Regex("[^\\p{L}\\p{N} ]"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 
@@ -660,7 +661,7 @@ object SaavnAudioResolver {
     }
 
     private fun parseBitrate(quality: String): Int {
-        val number = Regex("(\d+)").find(quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return 0
+        val number = Regex("(\\d+)").find(quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return 0
         return number * 1000
     }
 
