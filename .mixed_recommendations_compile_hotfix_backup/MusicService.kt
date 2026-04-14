@@ -1311,8 +1311,8 @@ class MusicService :
     private fun normalizeRecommendationKey(title: String, artists: String): String {
         return (title + " " + artists)
             .lowercase()
-            .replace(Regex("""[^\p{L}\p{N} ]"""), " ")
-            .replace(Regex("""\s+"""), " ")
+            .replace(Regex("[^\p{L}\p{N} ]"), " ")
+            .replace(Regex("\s+"), " ")
             .trim()
     }
 
@@ -1322,8 +1322,8 @@ class MusicService :
         duration: Int?,
         song: SongItem,
     ): Int {
-        val wantedTitle = title.lowercase().replace(Regex("""[^\p{L}\p{N} ]"""), " ").replace(Regex("""\s+"""), " ").trim()
-        val foundTitle = song.title.lowercase().replace(Regex("""[^\p{L}\p{N} ]"""), " ").replace(Regex("""\s+"""), " ").trim()
+        val wantedTitle = title.lowercase().replace(Regex("[^\p{L}\p{N} ]"), " ").replace(Regex("\s+"), " ").trim()
+        val foundTitle = song.title.lowercase().replace(Regex("[^\p{L}\p{N} ]"), " ").replace(Regex("\s+"), " ").trim()
         val wantedPrimaryArtist = artists.firstOrNull().orEmpty().lowercase().trim()
         val foundArtists = song.artists.map { it.name.lowercase().trim() }
 
@@ -1347,9 +1347,8 @@ class MusicService :
             }
         }
 
-        val songDuration = song.duration ?: 0
-        if (duration != null && songDuration > 0) {
-            val diff = kotlin.math.abs(songDuration - duration)
+        if (duration != null && song.duration > 0) {
+            val diff = kotlin.math.abs(song.duration - duration)
             score += when {
                 diff <= 2 -> 24
                 diff <= 5 -> 18

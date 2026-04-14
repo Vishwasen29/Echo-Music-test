@@ -1195,12 +1195,10 @@ fun BottomSheetPlayer(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = PlayerHorizontalPadding),
                 ) {
-                    val visibleRecommendations = playerRecommendations.take(8)
                     items(
-                        count = visibleRecommendations.size,
-                        key = { index -> visibleRecommendations[index].matchedYoutubeId },
-                    ) { index ->
-                        val recommendation = visibleRecommendations[index]
+                        items = playerRecommendations.take(8),
+                        key = { it.matchedYoutubeId },
+                    ) { recommendation ->
                         FilledTonalButton(
                             onClick = {
                                 playerConnection.service.playNext(listOf(recommendation.mediaItem))

@@ -583,28 +583,28 @@ object SaavnAudioResolver {
 
     private fun normalizeArtist(value: String): String {
         return normalizeBasic(value)
-            .replace(Regex("""\b(feat|featuring|ft)\b"""), " ")
-            .replace(Regex("""\s+"""), " ")
+            .replace(Regex("\b(feat|featuring|ft)\b"), " ")
+            .replace(Regex("\s+"), " ")
             .trim()
     }
 
     private fun normalizeTitleCore(value: String): String {
         return normalizeBasic(value)
-            .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"""), " ")
-            .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"""), " ")
-            .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
-            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio)\b"""), " ")
-            .replace(Regex("""\s+"""), " ")
+            .replace(Regex("\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"), " ")
+            .replace(Regex("\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"), " ")
+            .replace(Regex("\b(feat|featuring|ft)\b.*$"), " ")
+            .replace(Regex("\b(song|full song|official music video|official video|lyric video|audio)\b"), " ")
+            .replace(Regex("\s+"), " ")
             .trim()
     }
 
     private fun normalizeBasic(value: String): String {
         val stripped = Normalizer.normalize(value.lowercase(Locale.ROOT), Normalizer.Form.NFD)
-            .replace(Regex("""\p{Mn}+"""), "")
+            .replace(Regex("\p{Mn}+"), "")
         return stripped
             .replace('&', ' ')
-            .replace(Regex("""[^\p{L}\p{N} ]"""), " ")
-            .replace(Regex("""\s+"""), " ")
+            .replace(Regex("[^\p{L}\p{N} ]"), " ")
+            .replace(Regex("\s+"), " ")
             .trim()
     }
 
@@ -660,7 +660,7 @@ object SaavnAudioResolver {
     }
 
     private fun parseBitrate(quality: String): Int {
-        val number = Regex("""(\d+)""").find(quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return 0
+        val number = Regex("(\d+)").find(quality)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: return 0
         return number * 1000
     }
 
