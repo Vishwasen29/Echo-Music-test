@@ -380,15 +380,6 @@ class MusicService :
     private var lastPlaybackSpeed = 1.0f
 
     val automixItems = MutableStateFlow<List<MediaItem>>(emptyList())
-    data class SaavnSearchMatch(
-        val title: String,
-        val artistsLine: String,
-        val sourceTitle: String,
-        val sourceArtistsLine: String,
-        val mediaItem: MediaItem,
-        val matchedYoutubeId: String,
-    )
-
     data class PlayerRecommendation(
         val title: String,
         val artistsLine: String,
@@ -1441,120 +1432,6 @@ class MusicService :
     }
 
     suspend fun addRecommendationToYoutubePlaylist(
-        playlistId: String,
-        matchedYoutubeId: String,
-    ): Result<String> = runCatching {
-        YouTube.addToPlaylist(playlistId, matchedYoutubeId).getOrThrow()
-        matchedYoutubeId
-    }
-
-
-    private fun normalizeSaavnSearchText(value: String): String {
-        return value
-            .lowercase()
-            .replace(Regex("""[^\p{L}\p{N} ]"""), " ")
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-    }
-
-    private fun saavnYoutubeMatchScore(
-        title: String,
-        artists: List<String>,
-        duration: Int?,
-        song: SongItem,
-    ): Int {
-        val wantedTitle = normalizeSaavnSearchText(title)
-        val foundTitle = normalizeSaavnSearchText(song.title)
-        val wantedPrimaryArtist = normalizeSaavnSearchText(artists.firstOrNull().orEmpty())
-        val foundArtists = song.artists.map { normalizeSaavnSearchText(it.name) }
-
-        var score = 0
-        when {
-            wantedTitle.isNotBlank() && foundTitle == wantedTitle -> score += 120
-            wantedTitle.isNotBlank() && (foundTitle.contains(wantedTitle) || wantedTitle.contains(foundTitle)) -> score += 70
-            else -> {
-                val wantedTokens = wantedTitle.split(" ").filter { it.isNotBlank() }.toSet()
-                val foundTokens = foundTitle.split(" ").filter { it.isNotBlank() }.toSet()
-                score += wantedTokens.intersect(foundTokens).size * 14
-            }
-        }
-
-        if (wantedPrimaryArtist.isNotBlank()) {
-            score += when {
-                foundArtists.firstOrNull() == wantedPrimaryArtist -> 80
-                foundArtists.any { it.contains(wantedPrimaryArtist) || wantedPrimaryArtist.contains(it) } -> 50
-                foundArtists.isNotEmpty() -> -45
-                else -> -10
-            }
-        }
-
-        val songDuration = song.duration ?: 0
-        if (duration != null && songDuration > 0) {
-            val diff = kotlin.math.abs(songDuration - duration)
-            score += when {
-                diff <= 2 -> 24
-                diff <= 5 -> 18
-                diff <= 10 -> 10
-                diff <= 20 -> 0
-                else -> -18
-            }
-        }
-
-        return score
-    }
-
-    suspend fun searchSaavnForYoutube(
-        query: String,
-        limit: Int = 10,
-    ): Result<List<SaavnSearchMatch>> = withContext(Dispatchers.IO) {
-        runCatching {
-            val saavnResults = SaavnAudioResolver.searchSongs(query, limit).getOrThrow()
-            val matches = mutableListOf<SaavnSearchMatch>()
-
-            saavnResults.forEach { saavn ->
-                val youtubeQuery = listOf(saavn.title, saavn.artists.firstOrNull().orEmpty())
-                    .filter { it.isNotBlank() }
-                    .joinToString(" ")
-                    .trim()
-                if (youtubeQuery.isBlank()) return@forEach
-
-                val match = YouTube.search(youtubeQuery, YouTube.SearchFilter.FILTER_SONG)
-                    .getOrNull()
-                    ?.items
-                    ?.filterIsInstance<SongItem>()
-                    ?.maxByOrNull { song ->
-                        saavnYoutubeMatchScore(
-                            title = saavn.title,
-                            artists = saavn.artists,
-                            duration = saavn.duration,
-                            song = song,
-                        )
-                    } ?: return@forEach
-
-                val score = saavnYoutubeMatchScore(
-                    title = saavn.title,
-                    artists = saavn.artists,
-                    duration = saavn.duration,
-                    song = match,
-                )
-
-                if (score >= 75) {
-                    matches += SaavnSearchMatch(
-                        title = match.title,
-                        artistsLine = match.artists.joinToString(", ") { it.name },
-                        sourceTitle = saavn.title,
-                        sourceArtistsLine = saavn.artists.joinToString(", "),
-                        mediaItem = match.toMediaItem(),
-                        matchedYoutubeId = match.id,
-                    )
-                }
-            }
-
-            matches.distinctBy { it.matchedYoutubeId }.take(limit)
-        }
-    }
-
-    suspend fun addSaavnMatchToYoutubePlaylist(
         playlistId: String,
         matchedYoutubeId: String,
     ): Result<String> = runCatching {

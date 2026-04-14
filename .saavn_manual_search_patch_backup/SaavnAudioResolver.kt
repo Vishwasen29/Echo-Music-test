@@ -75,15 +75,6 @@ object SaavnAudioResolver {
         val matchedArtists: List<String>,
     )
 
-    data class SaavnSearchResult(
-        val sourceSongId: String,
-        val title: String,
-        val artists: List<String>,
-        val duration: Int?,
-        val language: String?,
-        val albumName: String?,
-    )
-
     data class RecommendationSeed(
         val title: String,
         val artists: List<String>,
@@ -188,34 +179,6 @@ object SaavnAudioResolver {
                         albumName = candidate.albumName,
                         language = candidate.language,
                         sourceSongId = candidate.id,
-                    )
-                }
-        }
-    }
-
-
-    suspend fun searchSongs(
-        query: String,
-        limit: Int = 12,
-    ): Result<List<SaavnSearchResult>> = withContext(Dispatchers.IO) {
-        runCatching {
-            if (query.isBlank()) return@runCatching emptyList()
-
-            search(query)
-                .distinctBy { it.id }
-                .sortedWith(
-                    compareByDescending<Candidate> { qualityScore(it.downloadLinks) }
-                        .thenBy { normalizeTitleCore(it.title).length }
-                )
-                .take(limit)
-                .map { candidate ->
-                    SaavnSearchResult(
-                        sourceSongId = candidate.id,
-                        title = candidate.title,
-                        artists = candidate.artists,
-                        duration = candidate.duration,
-                        language = candidate.language,
-                        albumName = candidate.albumName,
                     )
                 }
         }

@@ -189,9 +189,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.saket.squiggles.SquigglySlider
 import kotlin.math.roundToInt
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.OutlinedTextField
-import iad1tya.echo.music.ui.menu.AddToPlaylistDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -285,18 +282,6 @@ fun BottomSheetPlayer(
     val gradientColorsCache = remember { mutableMapOf<String, List<Color>>() }
     var showAudioRoutingDialog by remember { mutableStateOf(false) }
     var showShareSheet by remember { mutableStateOf(false) }
-    val coroutineScope = rememberCoroutineScope()
-    var showSaavnManualSearchDialog by rememberSaveable { mutableStateOf(false) }
-    var saavnManualQuery by rememberSaveable { mutableStateOf("") }
-    var isSaavnManualSearchLoading by remember { mutableStateOf(false) }
-    var saavnManualSearchResults by remember {
-        mutableStateOf(emptyList<iad1tya.echo.music.playback.MusicService.SaavnSearchMatch>())
-    }
-    var selectedSaavnManualMatch by remember {
-        mutableStateOf<iad1tya.echo.music.playback.MusicService.SaavnSearchMatch?>(null)
-    }
-    var showSaavnManualAddToPlaylist by rememberSaveable { mutableStateOf(false) }
-
     
     val audioRoutingSheetState = rememberBottomSheetState(
         dismissedBound = 0.dp,
@@ -419,137 +404,6 @@ fun BottomSheetPlayer(
     var sleepTimerValue by remember {
         mutableFloatStateOf(30f)
     }
-    AddToPlaylistDialog(
-        isVisible = showSaavnManualAddToPlaylist,
-        onGetSong = { targetPlaylist ->
-            val match = selectedSaavnManualMatch ?: return@AddToPlaylistDialog emptyList()
-            targetPlaylist.playlist.browseId?.let { playlistId ->
-                coroutineScope.launch(Dispatchers.IO) {
-                    playerConnection.service.addSaavnMatchToYoutubePlaylist(
-                        playlistId = playlistId,
-                        matchedYoutubeId = match.matchedYoutubeId,
-                    )
-                }
-            }
-            listOf(match.matchedYoutubeId)
-        },
-        onDismiss = {
-            showSaavnManualAddToPlaylist = false
-            selectedSaavnManualMatch = null
-        },
-    )
-
-    if (showSaavnManualSearchDialog) {
-        AlertDialog(
-            onDismissRequest = { showSaavnManualSearchDialog = false },
-            title = { Text("Search JioSaavn") },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    OutlinedTextField(
-                        value = saavnManualQuery,
-                        onValueChange = { saavnManualQuery = it },
-                        singleLine = true,
-                        label = { Text("Song or artist") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(
-                            enabled = saavnManualQuery.isNotBlank() && !isSaavnManualSearchLoading,
-                            onClick = {
-                                isSaavnManualSearchLoading = true
-                                coroutineScope.launch {
-                                    val results = withContext(Dispatchers.IO) {
-                                        playerConnection.service.searchSaavnForYoutube(saavnManualQuery, 10)
-                                            .getOrElse { emptyList() }
-                                    }
-                                    saavnManualSearchResults = results
-                                    isSaavnManualSearchLoading = false
-                                }
-                            },
-                        ) {
-                            Text("Search")
-                        }
-
-                        if (isSaavnManualSearchLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                    }
-
-                    androidx.compose.foundation.lazy.LazyColumn(
-                        modifier = Modifier.height(320.dp),
-                    ) {
-                        items(
-                            count = saavnManualSearchResults.size,
-                            key = { index -> saavnManualSearchResults[index].matchedYoutubeId },
-                        ) { index ->
-                            val result = saavnManualSearchResults[index]
-                            ListItem(
-                                headlineContent = {
-                                    Text(
-                                        text = result.title,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                supportingContent = {
-                                    Text(
-                                        text = buildString {
-                                            append(result.artistsLine)
-                                            if (result.sourceTitle.isNotBlank()) {
-                                                append("\nJioSaavn: ")
-                                                append(result.sourceTitle)
-                                                if (result.sourceArtistsLine.isNotBlank()) {
-                                                    append(" • ")
-                                                    append(result.sourceArtistsLine)
-                                                }
-                                            }
-                                        },
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                trailingContent = {
-                                    Row {
-                                        TextButton(
-                                            onClick = {
-                                                playerConnection.service.playNext(listOf(result.mediaItem))
-                                                Toast.makeText(context, "Added next", Toast.LENGTH_SHORT).show()
-                                            },
-                                        ) {
-                                            Text("Next")
-                                        }
-                                        TextButton(
-                                            onClick = {
-                                                selectedSaavnManualMatch = result
-                                                showSaavnManualAddToPlaylist = true
-                                            },
-                                        ) {
-                                            Text("Add")
-                                        }
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSaavnManualSearchDialog = false }) {
-                    Text("Close")
-                }
-            },
-        )
-    }
-
     if (showShareSheet) {
         val shareUrl = mediaMetadata?.id?.let { "https://music.youtube.com/watch?v=$it" } ?: ""
         if (shareUrl.isNotEmpty()) {
