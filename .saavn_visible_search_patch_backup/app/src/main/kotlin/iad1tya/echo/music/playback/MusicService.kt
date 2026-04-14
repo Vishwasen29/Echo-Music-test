@@ -3412,30 +3412,6 @@ class MusicService :
     }
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-        if (mediaId.startsWith("saavn:")) {
-            val saavnId = mediaId.removePrefix("saavn:")
-            val resolved = SaavnAudioResolver.resolveById(saavnId, audioQuality).getOrNull() ?: return null
-            val bitrate = resolved.bitrate ?: when (audioQuality) {
-                iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
-                iad1tya.echo.music.constants.AudioQuality.AUTO,
-                iad1tya.echo.music.constants.AudioQuality.HIGH -> 320_000
-            }
-            return ExternalResolvedUrl(
-                url = resolved.url,
-                expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-                formatEntity = FormatEntity(
-                    id = mediaId,
-                    itag = -320,
-                    mimeType = resolved.mimeType,
-                    codecs = codecForMimeType(resolved.mimeType),
-                    bitrate = bitrate,
-                    sampleRate = resolved.sampleRate,
-                    contentLength = 0L,
-                    loudnessDb = null,
-                    playbackUrl = "saavn://${resolved.songId}",
-                ),
-            )
-        }
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
         val bitrate = resolved.bitrate ?: when (audioQuality) {

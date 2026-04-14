@@ -152,27 +152,6 @@ object SaavnAudioResolver {
         }
     }
 
-
-    suspend fun resolveById(
-        sourceSongId: String,
-        audioQuality: AudioQuality,
-    ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
-        runCatching {
-            val hydrated = fetchSong(sourceSongId) ?: return@runCatching null
-            val chosenLink = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: return@runCatching null
-            ResolvedStream(
-                url = chosenLink.url,
-                bitrate = chosenLink.bitrate.takeIf { it > 0 },
-                mimeType = inferMimeType(chosenLink.url),
-                sampleRate = 44100,
-                provider = "Saavn",
-                songId = hydrated.id,
-                matchedTitle = hydrated.title,
-                matchedArtists = hydrated.artists,
-            )
-        }
-    }
-
     suspend fun recommendations(
         mediaMetadata: MediaMetadata,
         limit: Int = 8,
@@ -225,8 +204,7 @@ object SaavnAudioResolver {
             search(query)
                 .distinctBy { it.id }
                 .sortedWith(
-                    compareByDescending<Candidate> { saavnSearchScore(it, query) }
-                        .thenByDescending { qualityScore(it.downloadLinks) }
+                    compareByDescending<Candidate> { qualityScore(it.downloadLinks) }
                         .thenBy { normalizeTitleCore(it.title).length }
                 )
                 .take(limit)
@@ -241,27 +219,6 @@ object SaavnAudioResolver {
                     )
                 }
         }
-    }
-
-
-    private fun saavnSearchScore(candidate: Candidate, query: String): Int {
-        val normalizedQuery = normalizeTitleCore(query)
-        val normalizedTitle = normalizeTitleCore(candidate.title)
-        val artistText = candidate.artists.joinToString(" ") { normalizeArtist(it) }
-        var score = 0
-
-        score += when {
-            normalizedTitle == normalizedQuery -> 150
-            normalizedQuery.contains(normalizedTitle) || normalizedTitle.contains(normalizedQuery) -> 90
-            else -> tokenSimilarity(normalizedTitle, normalizedQuery)
-        }
-
-        val queryTokens = normalizedQuery.split(' ').filter { it.length > 1 }.toSet()
-        val artistTokens = artistText.split(' ').filter { it.length > 1 }.toSet()
-        score += queryTokens.intersect(artistTokens).size * 24
-        score += qualityScore(candidate.downloadLinks) / 10000
-        score += penaltyScore(candidate, normalizedQuery)
-        return score
     }
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {

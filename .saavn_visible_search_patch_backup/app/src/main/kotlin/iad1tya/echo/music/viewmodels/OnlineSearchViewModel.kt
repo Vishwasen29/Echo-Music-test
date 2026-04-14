@@ -25,7 +25,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-import iad1tya.echo.music.utils.SaavnAudioResolver
 
 @HiltViewModel
 class OnlineSearchViewModel
@@ -39,10 +38,8 @@ constructor(
     val filter = MutableStateFlow<YouTube.SearchFilter?>(null)
     var summaryPage by mutableStateOf<SearchSummaryPage?>(null)
     val viewStateMap = mutableStateMapOf<String, ItemsPage?>()
-    val saavnResults = MutableStateFlow<List<SaavnAudioResolver.SaavnSearchResult>>(emptyList())
 
     init {
-        viewModelScope.launch { loadSaavnResults() }
         viewModelScope.launch {
             filter.collect { filter ->
                 if (filter == null) {
@@ -91,18 +88,6 @@ constructor(
                 }
             }
         }
-    }
-
-
-    private suspend fun loadSaavnResults() {
-        SaavnAudioResolver.searchSongs(query, limit = 12)
-            .onSuccess { results ->
-                saavnResults.value = results
-            }
-            .onFailure {
-                reportException(it)
-                saavnResults.value = emptyList()
-            }
     }
 
     fun loadMore() {

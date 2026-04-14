@@ -71,23 +71,6 @@ import iad1tya.echo.music.ui.menu.YouTubePlaylistMenu
 import iad1tya.echo.music.ui.menu.YouTubeSongMenu
 import iad1tya.echo.music.viewmodels.OnlineSearchViewModel
 import kotlinx.coroutines.launch
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.Text
-import iad1tya.echo.music.playback.queues.SaavnQueue
-import iad1tya.echo.music.utils.SaavnAudioResolver
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -105,7 +88,6 @@ fun OnlineSearchResult(
     val lazyListState = rememberLazyListState()
 
     val searchFilter by viewModel.filter.collectAsState()
-    val saavnResults by viewModel.saavnResults.collectAsState()
     val searchSummary = viewModel.summaryPage
     val itemsPage by remember(searchFilter) {
         derivedStateOf {
@@ -256,25 +238,6 @@ fun OnlineSearchResult(
             .add(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal))
             .asPaddingValues(),
     ) {
-        if ((searchFilter == null || searchFilter == FILTER_SONG) && saavnResults.isNotEmpty()) {
-            item(key = "saavn_header") {
-                NavigationTitle("JioSaavn")
-            }
-            items(
-                items = saavnResults,
-                key = { "saavn_${it.sourceSongId}" },
-            ) { saavnSong ->
-                SaavnSearchRow(
-                    song = saavnSong,
-                    isActive = mediaMetadata?.id == "saavn:${saavnSong.sourceSongId}",
-                    onClick = {
-                        playerConnection.playQueue(SaavnQueue(saavnSong))
-                    },
-                    modifier = Modifier.animateItem(),
-                )
-            }
-        }
-
         if (searchFilter == null) {
             searchSummary?.summaries?.forEach { summary ->
                 item {
@@ -363,74 +326,5 @@ fun OnlineSearchResult(
                     .add(WindowInsets(top = AppBarHeight))
             )
             .fillMaxWidth()
-    )
-}
-
-
-@Composable
-private fun SaavnSearchRow(
-    song: SaavnAudioResolver.SaavnSearchResult,
-    isActive: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    ListItem(
-        headlineContent = {
-            Text(
-                text = song.title,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-            )
-        },
-        supportingContent = {
-            val artistText = song.artists.joinToString(", ").ifBlank { "Unknown artist" }
-            val details = listOfNotNull(
-                artistText,
-                "JioSaavn",
-                song.duration?.takeIf { it > 0 }?.let { seconds ->
-                    val min = seconds / 60
-                    val sec = seconds % 60
-                    "%d:%02d".format(min, sec)
-                }
-            ).joinToString(" • ")
-            Text(
-                text = details,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        },
-        leadingContent = {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (isActive) MaterialTheme.colorScheme.primary else Color(0xFF242424)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "S",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-        },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "320 kbps",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    painter = painterResource(R.drawable.play),
-                    contentDescription = null,
-                )
-            }
-        },
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
     )
 }
