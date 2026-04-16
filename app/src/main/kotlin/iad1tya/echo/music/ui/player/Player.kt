@@ -247,6 +247,7 @@ fun BottomSheetPlayer(
     val mediaMetadata by playerConnection.mediaMetadata.collectAsState()
     val currentSong by playerConnection.currentSong.collectAsState(initial = null)
     val currentFormat by playerConnection.currentFormat.collectAsState(initial = null)
+    val playbackSourceTrace by playerConnection.playbackSourceTrace.collectAsState(initial = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsState(initial = null)
     val automix by playerConnection.service.automixItems.collectAsState()
     val playerRecommendations by playerConnection.service.playerRecommendations.collectAsState()
@@ -282,6 +283,23 @@ fun BottomSheetPlayer(
         }
         val playbackTechText = remember(sourceText, bitrateText) {
             listOfNotNull(sourceText, bitrateText).joinToString(" • ").takeIf { it.isNotBlank() }
+        }
+
+        val playbackSourceStatusText = remember(playbackSourceTrace?.mediaId, mediaMetadata?.id, playbackSourceTrace?.attemptedSource, playbackSourceTrace?.finalSource, playbackSourceTrace?.detail) {
+            playbackSourceTrace
+                ?.takeIf { it.mediaId == mediaMetadata?.id }
+                ?.let { trace ->
+                    buildList {
+                        val attempted = trace.attemptedSource?.takeIf { it.isNotBlank() }
+                        val final = trace.finalSource?.takeIf { it.isNotBlank() }
+                        when {
+                            attempted != null && final != null && attempted != final -> add("Tried $attempted → $final")
+                            attempted != null && final == attempted -> add("Matched $final")
+                            attempted != null -> add("Tried $attempted")
+                        }
+                        trace.detail?.takeIf { it.isNotBlank() }?.let(::add)
+                    }.joinToString(" • ").takeIf { it.isNotBlank() }
+                }
         }
         val displayThumbnailUrl = currentSong?.thumbnailUrl ?: mediaMetadata?.thumbnailUrl
         val currentTrackCounterCompact = remember(
@@ -1036,6 +1054,17 @@ fun BottomSheetPlayer(
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
+                        }
+
+                        playbackSourceStatusText?.let { status ->
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                text = status,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextBackgroundColor.copy(alpha = 0.85f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                         }
                     }
 

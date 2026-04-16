@@ -311,6 +311,18 @@ class MusicService :
 
     private val forcedYoutubeFallbackIds = mutableSetOf<String>()
 
+
+    // CHATGPT_SAAVN_TRACE_START
+    data class PlaybackSourceTrace(
+        val mediaId: String,
+        val attemptedSource: String?,
+        val finalSource: String?,
+        val detail: String?,
+    )
+
+    val currentPlaybackSourceTrace = MutableStateFlow<PlaybackSourceTrace?>(null)
+    // CHATGPT_SAAVN_TRACE_END
+
     private var currentQueueTotalCount: Int? = null
 
 
@@ -324,6 +336,13 @@ class MusicService :
 
     private fun retryCurrentTrackWithYoutube(mediaId: String) {
         forcedYoutubeFallbackIds.add(mediaId)
+        updatePlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = "JioSaavn",
+            finalSource = "YouTube Music",
+            detail = "Retrying with YouTube Music after JioSaavn playback failed",
+        )
+        Log.d("MusicService", "Retrying $mediaId with YouTube Music after JioSaavn-backed playback failed")
         songUrlCache.remove(mediaId)
         performAggressiveCacheClear(mediaId)
         val currentIndex = player.currentMediaItemIndex
@@ -336,6 +355,45 @@ class MusicService :
     }
 
     private fun persistSaavnMetadata(
+
+
+    // CHATGPT_SAAVN_TRACE_HELPERS_START
+    private fun updatePlaybackSourceTrace(
+        mediaId: String,
+        attemptedSource: String?,
+        finalSource: String?,
+        detail: String?,
+    ) {
+        currentPlaybackSourceTrace.value = PlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = attemptedSource,
+            finalSource = finalSource,
+            detail = detail,
+        )
+    }
+
+    private fun clearForcedYoutubeFallback(mediaId: String) {
+        if (forcedYoutubeFallbackIds.remove(mediaId)) {
+            Log.d("MusicService", "Cleared forced YouTube fallback flag for $mediaId")
+        }
+    }
+
+    private fun markYoutubeResolved(mediaId: String, detail: String) {
+        clearForcedYoutubeFallback(mediaId)
+        val attempted = currentPlaybackSourceTrace.value
+            ?.takeIf { it.mediaId == mediaId }
+            ?.attemptedSource
+            ?: "JioSaavn"
+        updatePlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = attempted,
+            finalSource = "YouTube Music",
+            detail = detail,
+        )
+        Log.d("MusicService", "Using YouTube Music for $mediaId: $detail")
+    }
+    // CHATGPT_SAAVN_TRACE_HELPERS_END
+
         mediaId: String,
         saavnMetadata: iad1tya.echo.music.models.MediaMetadata,
     ) {
@@ -3009,6 +3067,7 @@ class MusicService :
 
                 songUrlCache[mediaId] =
                     streamUrl to System.currentTimeMillis() + (nonNullPlayback.streamExpiresInSeconds * 1000L)
+                markYoutubeResolved(mediaId, "Using YouTube Music stream after JioSaavn lookup did not win")
                 return@Factory dataSpec.withUri(streamUrl.toUri())
             }
         }
@@ -3476,10 +3535,42 @@ class MusicService :
     }
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-        if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) return null
+        if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) {
+            Log.d("MusicService", "Skipping JioSaavn for $mediaId because forced YouTube fallback is active")
+            updatePlaybackSourceTrace(
+                mediaId = mediaId,
+                attemptedSource = "JioSaavn",
+                finalSource = "YouTube Music",
+                detail = "Forced YouTube fallback is active for this track",
+            )
+            return null
+        }
+
         if (mediaId.startsWith("saavn:")) {
             val saavnId = mediaId.removePrefix("saavn:")
-            val resolved = SaavnAudioResolver.resolveById(saavnId, audioQuality).getOrNull() ?: return null
+            Log.d("MusicService", "Trying direct JioSaavn lookup for $mediaId using source id $saavnId")
+            val saavnResult = SaavnAudioResolver.resolveById(saavnId, audioQuality)
+            val resolved = saavnResult.getOrNull()
+            if (resolved == null) {
+                val detail = saavnResult.exceptionOrNull()?.message ?: "Direct JioSaavn lookup did not return a playable stream"
+                Log.d("MusicService", "Direct JioSaavn lookup failed for $mediaId: $detail")
+                updatePlaybackSourceTrace(
+                    mediaId = mediaId,
+                    attemptedSource = "JioSaavn",
+                    finalSource = null,
+                    detail = detail,
+                )
+                return null
+            }
+
+            clearForcedYoutubeFallback(mediaId)
+            updatePlaybackSourceTrace(
+                mediaId = mediaId,
+                attemptedSource = "JioSaavn",
+                finalSource = "JioSaavn",
+                detail = "Matched ${resolved.matchedTitle} • ${resolved.matchedArtists.joinToString().ifBlank { "artist unknown" }}",
+            )
+            Log.d("MusicService", "JioSaavn matched for $mediaId -> ${resolved.matchedTitle} / ${resolved.matchedArtists.joinToString()}")
             persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = resolveMetadataForMediaId(mediaId), resolved = resolved))
             val bitrate = resolved.bitrate ?: when (audioQuality) {
                 iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
@@ -3502,8 +3593,44 @@ class MusicService :
                 ),
             )
         }
-        val metadata = resolveMetadataForMediaId(mediaId) ?: return null
-        val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
+
+        val metadata = resolveMetadataForMediaId(mediaId)
+        if (metadata == null) {
+            Log.d("MusicService", "Skipping JioSaavn for $mediaId because media metadata is unavailable")
+            updatePlaybackSourceTrace(
+                mediaId = mediaId,
+                attemptedSource = "JioSaavn",
+                finalSource = "YouTube Music",
+                detail = "Could not load metadata needed for JioSaavn lookup",
+            )
+            return null
+        }
+
+        val requestedArtist = metadata.artists.firstOrNull()?.name.orEmpty()
+        Log.d("MusicService", "Trying JioSaavn for $mediaId -> ${metadata.title} / $requestedArtist")
+        val saavnResult = SaavnAudioResolver.resolve(metadata, audioQuality)
+        val resolved = saavnResult.getOrNull()
+        if (resolved == null) {
+            val detail = saavnResult.exceptionOrNull()?.message
+                ?: "No strong JioSaavn match for the original artist"
+            Log.d("MusicService", "JioSaavn rejected for $mediaId: $detail")
+            updatePlaybackSourceTrace(
+                mediaId = mediaId,
+                attemptedSource = "JioSaavn",
+                finalSource = "YouTube Music",
+                detail = detail,
+            )
+            return null
+        }
+
+        clearForcedYoutubeFallback(mediaId)
+        updatePlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = "JioSaavn",
+            finalSource = "JioSaavn",
+            detail = "Matched ${resolved.matchedTitle} • ${resolved.matchedArtists.joinToString().ifBlank { "artist unknown" }}",
+        )
+        Log.d("MusicService", "JioSaavn matched for $mediaId -> ${resolved.matchedTitle} / ${resolved.matchedArtists.joinToString()}")
         persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = metadata, resolved = resolved))
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
@@ -3527,6 +3654,7 @@ class MusicService :
         )
     }
 
+    suspend fun getStreamUrl
     suspend fun getStreamUrl(mediaId: String): String? {
         songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
             return it.first
@@ -3556,6 +3684,7 @@ class MusicService :
             if (streamUrl != null) {
                 val expiry = System.currentTimeMillis() + (playbackData.streamExpiresInSeconds * 1000L)
                 songUrlCache[mediaId] = streamUrl to expiry
+                markYoutubeResolved(mediaId, "Using YouTube Music stream after JioSaavn lookup did not win")
                 streamUrl
             } else {
                 null

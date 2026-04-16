@@ -71,6 +71,8 @@ class PlayerConnection(
             database.format(mediaMetadata?.id)
         }
 
+    val playbackSourceTrace = service.currentPlaybackSourceTrace
+
     val queueTitle = MutableStateFlow<String?>(null)
     val queueWindows = MutableStateFlow<List<Timeline.Window>>(emptyList())
     val currentMediaItemIndex = MutableStateFlow(-1)
