@@ -79,6 +79,10 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         }
     }
 
+    override fun onReceive(context: Context, intent: Intent) {
+        if (WidgetPlaybackController.handleReceive(context, intent)) return
+        super.onReceive(context, intent)
+    }
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
@@ -98,10 +102,6 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
     }
 
 
-    override fun onReceive(context: Context, intent: Intent) {
-        if (WidgetPlaybackController.handleReceive(context, intent)) return
-        super.onReceive(context, intent)
-    }
     private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
         return WidgetPlaybackController.createPendingIntent(context, WideMusicWidgetProvider::class.java, requestCode, action)
     }

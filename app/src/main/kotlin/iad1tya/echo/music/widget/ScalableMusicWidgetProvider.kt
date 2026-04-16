@@ -180,6 +180,10 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         }
     }
 
+    override fun onReceive(context: Context, intent: Intent) {
+        if (WidgetPlaybackController.handleReceive(context, intent)) return
+        super.onReceive(context, intent)
+    }
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
@@ -202,10 +206,6 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
     }
 
 
-    override fun onReceive(context: Context, intent: Intent) {
-        if (WidgetPlaybackController.handleReceive(context, intent)) return
-        super.onReceive(context, intent)
-    }
     private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
         return WidgetPlaybackController.createPendingIntent(context, ScalableMusicWidgetProvider::class.java, requestCode, action)
     }

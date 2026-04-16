@@ -348,14 +348,15 @@ class MusicWidgetProvider : AppWidgetProvider() {
         }
 
     
+        private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
+            return WidgetPlaybackController.createPendingIntent(context, MusicWidgetProvider::class.java, requestCode, action)
+        }
+    }
+
     override fun onReceive(context: Context, intent: Intent) {
         if (WidgetPlaybackController.handleReceive(context, intent)) return
         super.onReceive(context, intent)
     }
-    private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
-        return WidgetPlaybackController.createPendingIntent(context, MusicWidgetProvider::class.java, requestCode, action)
-    }
-
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
