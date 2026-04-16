@@ -130,7 +130,20 @@ object SaavnAudioResolver {
                         .thenByDescending { qualityScore(it.first.downloadLinks) }
                 )
 
-            val best = ranked.firstOrNull()?.takeIf { it.second >= 110 }?.first ?: return@runCatching null
+            val requestedPrimaryArtist = normalizeArtist(mediaMetadata.artists.firstOrNull()?.name.orEmpty())
+            val artistMatched = if (requestedPrimaryArtist.isBlank()) {
+                ranked
+            } else {
+                ranked.filter { (candidate, _) -> hasPrimaryArtistMatch(candidate, requestedPrimaryArtist) }
+            }
+
+            val best = when {
+                artistMatched.isNotEmpty() -> artistMatched.firstOrNull { it.second >= 120 }?.first
+                requestedPrimaryArtist.isNotBlank() -> ranked.firstOrNull { (candidate, score) ->
+                    score >= 170 && hasStrongFallbackEvidence(candidate, mediaMetadata)
+                }?.first
+                else -> ranked.firstOrNull { it.second >= 110 }?.first
+            } ?: return@runCatching null
 
             val hydrated = if (best.downloadLinks.isNotEmpty()) {
                 best
@@ -271,14 +284,20 @@ object SaavnAudioResolver {
         val album = mediaMetadata.album?.title?.trim().orEmpty()
         val strippedTitle = normalizeTitleCore(title)
 
-        return linkedSetOf(
+        val artistBacked = linkedSetOf(
             listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
             listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
             listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
             listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
+        ).filter { it.isNotBlank() }
+
+        val broadFallback = linkedSetOf(
             title,
             strippedTitle,
         ).filter { it.isNotBlank() }
+
+        return (artistBacked + broadFallback).distinct()
     }
 
     private fun search(query: String): List<Candidate> {
@@ -522,20 +541,25 @@ object SaavnAudioResolver {
 
         if (requestedPrimaryArtist.isNotBlank()) {
             score += when {
-                candidatePrimaryArtist == requestedPrimaryArtist -> 90
-                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 55
-                candidateArtists.isNotEmpty() -> -75
-                else -> -20
+                candidatePrimaryArtist == requestedPrimaryArtist -> 125
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 75
+                candidateArtists.isNotEmpty() -> -125
+                else -> -10
             }
         }
 
         val secondaryMatches = requestedArtists.drop(1).count { wanted ->
             candidateArtists.any { found -> artistNamesMatch(found, wanted) }
         }
-        score += secondaryMatches * 24
+        score += secondaryMatches * 28
 
-        if (requestedArtists.isNotEmpty() && candidateArtists.isNotEmpty() && secondaryMatches == 0 && !candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }) {
-            score -= 35
+        if (
+            requestedArtists.isNotEmpty() &&
+            candidateArtists.isNotEmpty() &&
+            secondaryMatches == 0 &&
+            !candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+        ) {
+            score -= 55
         }
 
         if (requestedAlbum.isNotBlank() && candidateAlbum.isNotBlank()) {
@@ -577,6 +601,40 @@ object SaavnAudioResolver {
         if (candidate.downloadLinks.isNotEmpty()) score += 6
 
         return score
+    }
+
+    private fun hasPrimaryArtistMatch(candidate: Candidate, requestedPrimaryArtist: String): Boolean {
+        if (requestedPrimaryArtist.isBlank()) return true
+        return candidate.artists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+    }
+
+    private fun hasStrongFallbackEvidence(candidate: Candidate, requested: MediaMetadata): Boolean {
+        val requestedTitle = normalizeTitleCore(requested.title)
+        val candidateTitle = normalizeTitleCore(candidate.title)
+        val requestedAlbum = normalizeTitleCore(requested.album?.title.orEmpty())
+        val candidateAlbum = normalizeTitleCore(candidate.albumName.orEmpty())
+        val candidateArtistsKnown = candidate.artists.any { normalizeArtist(it).isNotBlank() }
+
+        val titleMatchesExactly =
+            requestedTitle.isNotBlank() &&
+                candidateTitle.isNotBlank() &&
+                (requestedTitle == candidateTitle || requestedTitle.contains(candidateTitle) || candidateTitle.contains(requestedTitle))
+
+        val durationMatches = if (requested.duration > 0 && candidate.duration != null && candidate.duration > 0) {
+            abs(candidate.duration - requested.duration) <= 5
+        } else {
+            true
+        }
+
+        val albumMatches = if (requestedAlbum.isNotBlank() && candidateAlbum.isNotBlank()) {
+            requestedAlbum == candidateAlbum ||
+                requestedAlbum.contains(candidateAlbum) ||
+                candidateAlbum.contains(requestedAlbum)
+        } else {
+            true
+        }
+
+        return titleMatchesExactly && durationMatches && albumMatches && !candidateArtistsKnown
     }
 
     private fun languageHintScore(candidate: Candidate, requestedTitleScript: ScriptFamily): Int {
@@ -649,7 +707,39 @@ object SaavnAudioResolver {
     }
 
     private fun artistNamesMatch(left: String, right: String): Boolean {
-        return left == right || left.contains(right) || right.contains(left)
+        val normalizedLeft = normalizeArtist(left)
+        val normalizedRight = normalizeArtist(right)
+        if (normalizedLeft.isBlank() || normalizedRight.isBlank()) return false
+        if (normalizedLeft == normalizedRight) return true
+
+        val leftTokens = artistTokens(normalizedLeft)
+        val rightTokens = artistTokens(normalizedRight)
+        if (leftTokens.isEmpty() || rightTokens.isEmpty()) return false
+        if (leftTokens == rightTokens) return true
+
+        val overlap = leftTokens.intersect(rightTokens.toSet())
+        val smallerSize = minOf(leftTokens.size, rightTokens.size)
+        val largerSize = maxOf(leftTokens.size, rightTokens.size)
+
+        if (smallerSize >= 2 && overlap.size == smallerSize && largerSize - smallerSize <= 1) {
+            return true
+        }
+
+        if (smallerSize == 1 && overlap.size == 1) {
+            val token = overlap.first()
+            if (token.length >= 5) return true
+        }
+
+        return false
+    }
+
+    private fun artistTokens(value: String): List<String> {
+        return normalizeArtist(value)
+            .split(' ')
+            .map { it.trim() }
+            .filter { token ->
+                token.length > 1 && token !in setOf("and", "the", "x", "with", "artist", "singer")
+            }
     }
 
     private fun tokenSimilarity(left: String, right: String): Int {
