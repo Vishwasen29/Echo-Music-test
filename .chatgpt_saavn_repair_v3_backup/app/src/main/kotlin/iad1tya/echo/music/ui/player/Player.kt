@@ -280,10 +280,7 @@ fun BottomSheetPlayer(
                 else -> "YouTube Music"
             }
         }
-        val playbackTechText = remember(sourceText, bitrateText) {
-            listOfNotNull(sourceText, bitrateText).joinToString(" • ").takeIf { it.isNotBlank() }
-        }
-        val displayThumbnailUrl = currentSong?.thumbnailUrl ?: mediaMetadata?.thumbnailUrl
+        val displayThumbnailUrl = currentSong?.song?.thumbnailUrl ?: mediaMetadata?.thumbnailUrl
         val currentTrackCounterCompact = remember(
             playerConnection.player.currentMediaItemIndex,
             playerConnection.player.mediaItemCount,
@@ -1022,19 +1019,39 @@ fun BottomSheetPlayer(
                             )
                         }
 
-                        playbackTechText?.let { tech ->
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(999.dp))
-                                    .background(TextBackgroundColor.copy(alpha = 0.14f))
-                                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                            ) {
-                                Text(
-                                    text = tech,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextBackgroundColor,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            sourceText?.let { source ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(TextBackgroundColor.copy(alpha = 0.14f))
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = source,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = TextBackgroundColor,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
+                            }
+                            bitrateText?.let { bitrate ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(999.dp))
+                                        .background(TextBackgroundColor.copy(alpha = 0.14f))
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = bitrate,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = TextBackgroundColor,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                }
                             }
                         }
                     }

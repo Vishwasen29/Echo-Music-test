@@ -76,7 +76,7 @@ fun ShowMediaInfo(videoId: String) {
     val sourceSummary = remember(currentFormat?.itag, currentFormat?.playbackUrl, currentFormat?.bitrate) {
         listOfNotNull(
             describeAudioSource(currentFormat),
-            currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },
+            currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
         ).joinToString(" • ").takeIf { it.isNotBlank() }
     }
 
@@ -180,6 +180,20 @@ fun ShowMediaInfo(videoId: String) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = it,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    val sourceSummary = listOfNotNull(
+                        describeAudioSource(currentFormat),
+                        currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },
+                    ).joinToString(" • ")
+                    if (sourceSummary.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = sourceSummary,
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,

@@ -76,7 +76,6 @@ object SaavnAudioResolver {
         val thumbnailUrl: String?,
         val albumTitle: String?,
         val durationSeconds: Int?,
-
     )
 
     data class SaavnSearchResult(
@@ -110,9 +109,8 @@ object SaavnAudioResolver {
         val duration: Int?,
         val language: String?,
         val albumName: String?,
-        val downloadLinks: List<DownloadLink>,
         val thumbnailUrl: String?,
-
+        val downloadLinks: List<DownloadLink>,
     )
 
     suspend fun resolve(
@@ -156,9 +154,9 @@ object SaavnAudioResolver {
                 songId = hydrated.id,
                 matchedTitle = hydrated.title,
                 matchedArtists = hydrated.artists,
-            thumbnailUrl = hydrated.thumbnailUrl,
-            albumTitle = hydrated.albumName,
-            durationSeconds = hydrated.duration,
+                thumbnailUrl = hydrated.thumbnailUrl,
+                albumTitle = hydrated.albumName,
+                durationSeconds = hydrated.duration,
             )
         }
     }
@@ -180,9 +178,6 @@ object SaavnAudioResolver {
                 songId = hydrated.id,
                 matchedTitle = hydrated.title,
                 matchedArtists = hydrated.artists,
-            thumbnailUrl = hydrated.thumbnailUrl,
-            albumTitle = hydrated.albumName,
-            durationSeconds = hydrated.duration,
             )
         }
     }
@@ -291,10 +286,12 @@ object SaavnAudioResolver {
         queries += listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
         queries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
         queries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
+
         if (!hasArtist) {
             queries += title
             queries += strippedTitle
         }
+
         return queries.filter { it.isNotBlank() }
     }
 
@@ -453,52 +450,6 @@ object SaavnAudioResolver {
         )
     }
 
-
-
-    private fun parseThumbnail(json: JSONObject): String? {
-        val direct = listOf(
-            json.optString("image"),
-            json.optString("thumbnail"),
-            json.optString("thumbnailUrl"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return upgradeImageUrl(direct)
-
-        val imageObject = json.optJSONObject("image")
-        if (imageObject != null) {
-            listOf(
-                imageObject.optString("url"),
-                imageObject.optString("link"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(it) }
-        }
-
-        val imageArray = json.optJSONArray("image")
-        if (imageArray != null) {
-            for (index in imageArray.length() - 1 downTo 0) {
-                val item = imageArray.optJSONObject(index) ?: continue
-                val url = item.optString("url").trim()
-                if (url.isNotBlank()) return upgradeImageUrl(url)
-            }
-        }
-
-        val albumObject = json.optJSONObject("album")
-        if (albumObject != null) {
-            listOf(
-                albumObject.optString("image"),
-                albumObject.optString("thumbnail"),
-                albumObject.optString("thumbnailUrl"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(it) }
-        }
-
-        return null
-    }
-
-    private fun upgradeImageUrl(value: String): String {
-        return value
-            .replace("50x50", "500x500")
-            .replace("150x150", "500x500")
-            .replace("_50x50", "_500x500")
-            .replace("_150x150", "_500x500")
-    }
     private fun parseArtists(json: JSONObject): List<String> {
         val artists = linkedSetOf<String>()
 
@@ -524,6 +475,42 @@ object SaavnAudioResolver {
         }
 
         return artists.toList()
+    }
+
+    private fun parseThumbnail(json: JSONObject): String? {
+        val direct = listOf(
+            json.optString("image"),
+            json.optString("imageUrl"),
+            json.optString("thumbnail"),
+            json.optString("thumbnailUrl"),
+        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
+        if (!direct.isNullOrBlank()) return upgradeImageUrl(direct)
+
+        val imageObject = json.optJSONObject("image")
+        if (imageObject != null) {
+            listOf(
+                imageObject.optString("url"),
+                imageObject.optString("link"),
+            ).map { it.trim() }.firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(it) }
+        }
+
+        val imageArray = json.optJSONArray("image")
+        if (imageArray != null) {
+            for (index in imageArray.length() - 1 downTo 0) {
+                val item = imageArray.optJSONObject(index) ?: continue
+                val url = item.optString("url").trim()
+                if (url.isNotBlank()) return upgradeImageUrl(url)
+            }
+        }
+
+        return null
+    }
+
+    private fun upgradeImageUrl(value: String): String {
+        return value
+            .replace("50x50", "500x500")
+            .replace("150x150", "500x500")
+            .replace("500x500", "500x500")
     }
 
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
@@ -563,15 +550,34 @@ object SaavnAudioResolver {
 
     private fun qualityScore(links: List<DownloadLink>): Int = links.maxOfOrNull { it.bitrate } ?: 0
 
+    private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
+        val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
+        if (requestedPrimaryArtist.isBlank()) {
+            return score >= 135
+        }
+
+        val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
+        val strongArtistMatch = candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+        if (!strongArtistMatch) return false
+
+        val requestedTitle = normalizeTitleCore(requested.title)
+        val candidateTitle = normalizeTitleCore(candidate.title)
+        val titleCloseEnough = candidateTitle == requestedTitle ||
+            candidateTitle.contains(requestedTitle) ||
+            requestedTitle.contains(candidateTitle) ||
+            tokenSimilarity(candidateTitle, requestedTitle) >= 34
+
+        return titleCloseEnough && score >= 125
+    }
+
     private fun hasStrongPrimaryArtistMatch(candidate: Candidate, requested: MediaMetadata): Boolean {
         val requestedArtists = requested.artists.map { normalizeArtist(it.name) }.filter { it.isNotBlank() }
         val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
         val requestedPrimaryArtist = requestedArtists.firstOrNull().orEmpty()
         if (requestedPrimaryArtist.isBlank()) return true
-
         val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
-        if (candidatePrimaryArtist == requestedPrimaryArtist) return true
-        return candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+        return candidatePrimaryArtist == requestedPrimaryArtist ||
+            candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
@@ -751,8 +757,8 @@ object SaavnAudioResolver {
         if (leftTokens.isEmpty() || rightTokens.isEmpty()) return false
 
         val overlap = leftTokens.intersect(rightTokens).size
-        val minSize = minOf(leftTokens.size, rightTokens.size)
-        return overlap >= minOf(2, minSize) || (minSize == 1 && overlap == 1 && left.length == right.length)
+        val maxSize = max(leftTokens.size, rightTokens.size)
+        return overlap == maxSize || (overlap >= 2 && overlap >= minOf(leftTokens.size, rightTokens.size))
     }
 
     private fun tokenSimilarity(left: String, right: String): Int {
