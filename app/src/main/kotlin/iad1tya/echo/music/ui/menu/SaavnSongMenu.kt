@@ -250,7 +250,7 @@ private fun saavnSearchResultToMetadata(song: SaavnAudioResolver.SaavnSearchResu
         artists = song.artists.map { MediaMetadata.Artist(id = null, name = it) },
         duration = song.duration ?: -1,
         thumbnailUrl = null,
-        album = song.albumName?.let { title -> MediaMetadata.Album(id = null, title = title) },
+        album = song.albumName?.let { title -> MediaMetadata.Album(id = "saavn:${song.sourceSongId}", title = title) },
         setVideoId = null,
         explicit = false,
         isVideoSong = false,
@@ -268,8 +268,8 @@ private fun saavnPlaylistMatchScore(
 ): Int {
     fun normalize(value: String): String = value
         .lowercase()
-        .replace(Regex("[^a-z0-9\s]"), " ")
-        .replace(Regex("\s+"), " ")
+        .replace(Regex("""[^a-z0-9\s]"""), " ")
+        .replace(Regex("""\s+"""), " ")
         .trim()
 
     val sourceTitle = normalize(source.title)
