@@ -346,16 +346,16 @@ class MusicWidgetProvider : AppWidgetProvider() {
                 shuffleEnabled = shuffleEnabled,
             )
         }
-    private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
-        val intent = Intent(context, MusicService::class.java).apply { this.action = action }
-        return PendingIntent.getService(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+
+    
+        private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
+            return WidgetPlaybackController.createPendingIntent(context, MusicWidgetProvider::class.java, requestCode, action)
+        }
     }
 
+    override fun onReceive(context: Context, intent: Intent) {
+        if (WidgetPlaybackController.handleReceive(context, intent)) return
+        super.onReceive(context, intent)
     }
     override fun onUpdate(
         context: Context,

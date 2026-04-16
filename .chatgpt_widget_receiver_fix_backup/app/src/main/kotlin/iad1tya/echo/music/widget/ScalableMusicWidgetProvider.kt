@@ -116,6 +116,7 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             )
         }
 
+
         private const val DEFAULT_BG = 0xFF111111.toInt()
         private const val INACTIVE_ICON = 0x88FFFFFF.toInt()
         private const val ACTIVE_ICON = 0xFFFFFFFF.toInt()
@@ -178,6 +179,11 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             }
         }
     }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (WidgetPlaybackController.handleReceive(context, intent)) return
+        super.onReceive(context, intent)
+    }
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
@@ -198,15 +204,12 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
             trackCounter = null,
         )
     }
+
+
     private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
-        val intent = Intent(context, MusicService::class.java).apply { this.action = action }
-        return PendingIntent.getService(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        return WidgetPlaybackController.createPendingIntent(context, ScalableMusicWidgetProvider::class.java, requestCode, action)
     }
+
 
     // ECHO_FIX_SQUIGGLE_WIDGET
     private fun createSquiggleProgressBitmap(
@@ -308,6 +311,7 @@ class ScalableMusicWidgetProvider : AppWidgetProvider() {
         canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radiusPx, radiusPx, paint)
         return output
     }
+
 
     private fun createWaveformProgressBitmap(
         width: Int,
