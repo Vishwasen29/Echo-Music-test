@@ -274,6 +274,8 @@ class MusicService :
     val waitingForNetworkConnection = MutableStateFlow(false)
     private val isNetworkConnected = MutableStateFlow(false)
     private var lyricsPreloadManager: LyricsPreloadManager? = null
+    // CHATGPT_QUEUE_PREFETCH_PATCH
+    private var queueAudioPrefetchManager: QueueAudioPrefetchManager? = null
 
     private val audioQuality by enumPreference(
         this,
@@ -359,6 +361,10 @@ class MusicService :
     @Inject
     @DownloadCache
     lateinit var downloadCache: SimpleCache
+
+    // CHATGPT_QUEUE_PREFETCH_PATCH
+    @Inject
+    lateinit var downloadUtil: DownloadUtil
 
     lateinit var player: ExoPlayer
     private lateinit var mediaSession: MediaLibrarySession
@@ -522,6 +528,12 @@ class MusicService :
             database = database,
             networkConnectivity = connectivityObserver,
             lyricsHelper = lyricsHelper,
+        )
+        // CHATGPT_QUEUE_PREFETCH_PATCH
+        queueAudioPrefetchManager = QueueAudioPrefetchManager(
+            context = this,
+            networkConnectivity = connectivityObserver,
+            downloadUtil = downloadUtil,
         )
         try {
         setMediaNotificationProvider(
@@ -2281,6 +2293,9 @@ class MusicService :
             lyricsPreloadManager?.onSongChanged(player.currentMediaItemIndex, queue)
         }
 
+        // CHATGPT_QUEUE_PREFETCH_PATCH
+        queueAudioPrefetchManager?.onQueuePositionChanged(player)
+
         // Auto load more songs
         if (dataStore.get(AutoLoadMoreKey, true) &&
             reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
@@ -3367,6 +3382,9 @@ class MusicService :
         connectivityObserver.unregister()
         lyricsPreloadManager?.destroy()
         lyricsPreloadManager = null
+        // CHATGPT_QUEUE_PREFETCH_PATCH
+        queueAudioPrefetchManager?.destroy()
+        queueAudioPrefetchManager = null
         abandonAudioFocus()
         releaseLoudnessEnhancer()
         releaseProAudioEffects()

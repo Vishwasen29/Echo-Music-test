@@ -1,5 +1,7 @@
 package iad1tya.echo.music.playback
 
+import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.DataSpec
 import android.content.Context
 import android.net.ConnectivityManager
 import androidx.core.content.getSystemService
@@ -238,6 +240,35 @@ constructor(
                 playbackUrl = null,
             ),
         )
+    }
+
+
+    // CHATGPT_QUEUE_PREFETCH_PATCH
+    suspend fun prefetchToPlayerCache(
+        mediaId: String,
+        maxBytes: Long = 8L * 1024L * 1024L,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (mediaId.isBlank() || maxBytes <= 0L) return@withContext false
+        val targetLength = maxBytes.coerceAtLeast(256L * 1024L)
+        if (playerCache.isCached(mediaId, 0, targetLength)) return@withContext true
+
+        runCatching {
+            val dataSource = dataSourceFactory.createDataSource()
+            val dataSpec = DataSpec.Builder()
+                .setUri("echo://$mediaId".toUri())
+                .setKey(mediaId)
+                .setPosition(0)
+                .setLength(targetLength)
+                .build()
+
+            CacheWriter(
+                dataSource,
+                dataSpec,
+                null,
+                null,
+            ).cache()
+            true
+        }.getOrElse { false }
     }
 
     val downloadNotificationHelper =

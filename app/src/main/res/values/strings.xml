@@ -434,4 +434,9 @@
 
     <!-- Widget -->
     <string name="widget_description">Music player widget</string>
+
+    <!-- CHATGPT_QUEUE_PREFETCH_PATCH -->
+    <string name="prefetch_upcoming_songs">Prefetch upcoming songs</string>
+    <string name="prefetch_upcoming_songs_desc">Warm up the first part of the next queued tracks to reduce delay when skipping. Uses the actual shuffle order and stays lighter than full downloads.</string>
+    <string name="prefetch_upcoming_songs_count">Upcoming songs to prefetch</string>
 </resources>

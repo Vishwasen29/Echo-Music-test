@@ -439,6 +439,9 @@ val LyricsRomanizeMacedonianKey = booleanPreferencesKey("lyricsRomanizeMacedonia
 val LyricsRomanizeCyrillicByLineKey = booleanPreferencesKey("lyricsRomanizeCyrillicByLine")
 val PreloadQueueLyricsEnabledKey = booleanPreferencesKey("preload_queue_lyrics_enabled")
 val QueueLyricsPreloadCountKey = intPreferencesKey("queue_lyrics_preload_count")
+// CHATGPT_QUEUE_PREFETCH_PATCH
+val QueueAudioPrefetchEnabledKey = booleanPreferencesKey("queue_audio_prefetch_enabled")
+val QueueAudioPrefetchCountKey = intPreferencesKey("queue_audio_prefetch_count")
 val TranslateLyricsKey = booleanPreferencesKey("translateLyrics")
 val UseLyricsV2Key = booleanPreferencesKey("useLyricsV2")
 val OpenRouterApiKey = stringPreferencesKey("openRouterApiKey")

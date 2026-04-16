@@ -1,5 +1,7 @@
 package iad1tya.echo.music.ui.screens.settings
 
+import iad1tya.echo.music.constants.QueueAudioPrefetchEnabledKey
+import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
 import android.os.Build
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -281,6 +283,17 @@ fun PlayerSettings(
         defaultValue = 2
     )
 
+
+    // CHATGPT_QUEUE_PREFETCH_PATCH
+    val (queueAudioPrefetchEnabled, onQueueAudioPrefetchEnabledChange) = rememberPreference(
+        QueueAudioPrefetchEnabledKey,
+        defaultValue = true
+    )
+    val (queueAudioPrefetchCount, onQueueAudioPrefetchCountChange) = rememberPreference(
+        QueueAudioPrefetchCountKey,
+        defaultValue = 10
+    )
+
     Column(
         Modifier
             .windowInsetsPadding(LocalPlayerAwareWindowInsets.current.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
@@ -522,6 +535,27 @@ fun PlayerSettings(
             checked = preventDuplicates,
             onCheckedChange = onPreventDuplicatesChange
         )
+
+
+        // CHATGPT_QUEUE_PREFETCH_PATCH
+        SwitchPreference(
+            title = { Text(stringResource(R.string.prefetch_upcoming_songs)) },
+            description = stringResource(R.string.prefetch_upcoming_songs_desc),
+            icon = { Icon(painterResource(R.drawable.cached), null) },
+            checked = queueAudioPrefetchEnabled,
+            onCheckedChange = onQueueAudioPrefetchEnabledChange
+        )
+
+        if (queueAudioPrefetchEnabled) {
+            ListPreference(
+                title = { Text(stringResource(R.string.prefetch_upcoming_songs_count)) },
+                icon = { Icon(painterResource(R.drawable.cached), null) },
+                selectedValue = queueAudioPrefetchCount.coerceIn(1, 10),
+                values = (1..10).toList(),
+                valueText = { "$it songs" },
+                onValueSelected = onQueueAudioPrefetchCountChange
+            )
+        }
 
         SwitchPreference(
             title = { Text(stringResource(R.string.auto_load_more)) },
