@@ -16,6 +16,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class QueueAudioPrefetchManager(
     private val context: Context,
@@ -27,10 +28,6 @@ class QueueAudioPrefetchManager(
 
     fun onQueuePositionChanged(player: Player) {
         prefetchJob?.cancel()
-
-        if (player.currentMediaItemIndex == -1 || player.mediaItemCount <= 1) {
-            return
-        }
 
         prefetchJob = scope.launch {
             val preferences = context.dataStore.data.first()
@@ -45,7 +42,9 @@ class QueueAudioPrefetchManager(
                 return@launch
             }
 
-            val nextMediaIds = getNextMediaIds(player, prefetchCount)
+            val nextMediaIds = withContext(Dispatchers.Main.immediate) {
+                getNextMediaIds(player, prefetchCount)
+            }
             if (nextMediaIds.isEmpty()) return@launch
 
             nextMediaIds.forEachIndexed { index, mediaId ->
@@ -72,16 +71,21 @@ class QueueAudioPrefetchManager(
         val timeline = player.currentTimeline
         if (timeline.isEmpty) return emptyList()
 
+        val currentMediaId = player.currentMediaItem?.mediaId
+        val mediaItemCount = player.mediaItemCount
+        val repeatMode = player.repeatMode
+        val shuffleModeEnabled = player.shuffleModeEnabled
+
         val result = linkedSetOf<String>()
         var index = player.currentMediaItemIndex
         var guard = 0
-        while (result.size < count && guard < player.mediaItemCount + count + 4) {
+        while (result.size < count && guard < mediaItemCount + count + 4) {
             guard += 1
-            val nextIndex = timeline.getNextWindowIndex(index, player.repeatMode, player.shuffleModeEnabled)
+            val nextIndex = timeline.getNextWindowIndex(index, repeatMode, shuffleModeEnabled)
             if (nextIndex == -1 || nextIndex == index) break
             index = nextIndex
             val mediaId = player.getMediaItemAt(index).mediaId
-            if (mediaId.isNotBlank() && mediaId != player.currentMediaItem?.mediaId) {
+            if (mediaId.isNotBlank() && mediaId != currentMediaId) {
                 result.add(mediaId)
             }
         }
