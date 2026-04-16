@@ -7,7 +7,6 @@ import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
 import iad1tya.echo.music.constants.QueueAudioPrefetchEnabledKey
 import iad1tya.echo.music.utils.NetworkConnectivityObserver
 import iad1tya.echo.music.utils.dataStore
-import iad1tya.echo.music.utils.reportException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,6 +14,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class QueueAudioPrefetchManager(
@@ -33,41 +33,33 @@ class QueueAudioPrefetchManager(
         }
 
         prefetchJob = scope.launch {
-            try {
-                val preferences = context.dataStore.data.first()
-                val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: true
-                if (!enabled) {
-                    Log.d(TAG, "Queue audio prefetch is disabled")
-                    return@launch
-                }
+            val preferences = context.dataStore.data.first()
+            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: true
+            if (!enabled) return@launch
 
-                val prefetchCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
-                    .coerceIn(0, MAX_PREFETCH_COUNT)
-                if (prefetchCount <= 0) return@launch
+            val prefetchCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
+                .coerceIn(1, MAX_PREFETCH_COUNT)
 
-                val isNetworkAvailable = try {
-                    networkConnectivity.isCurrentlyConnected()
-                } catch (_: Exception) {
-                    true
-                }
-                if (!isNetworkAvailable) {
-                    Log.d(TAG, "Network unavailable, skipping queue audio prefetch")
-                    return@launch
-                }
+            if (!networkConnectivity.isCurrentlyConnected()) {
+                Log.d(TAG, "Network unavailable, skipping queue audio prefetch")
+                return@launch
+            }
 
-                val nextMediaIds = getNextMediaIds(player, prefetchCount)
-                if (nextMediaIds.isEmpty()) return@launch
+            val nextMediaIds = getNextMediaIds(player, prefetchCount)
+            if (nextMediaIds.isEmpty()) return@launch
 
-                nextMediaIds.forEachIndexed { index, mediaId ->
-                    val success = downloadUtil.prefetchToPlayerCache(
+            nextMediaIds.forEachIndexed { index, mediaId ->
+                if (!isActive) return@launch
+                runCatching {
+                    downloadUtil.prefetchToPlayerCache(
                         mediaId = mediaId,
                         maxBytes = PREFETCH_BYTES,
                     )
-                    Log.d(TAG, "Prefetch ${index + 1}/${nextMediaIds.size} for $mediaId -> $success")
-                    delay(PREFETCH_DELAY_MS)
+                }.onFailure {
+                    Log.w(TAG, "Prefetch failed for $mediaId", it)
                 }
-            } catch (e: Exception) {
-                reportException(e)
+                Log.d(TAG, "Prefetch scheduled ${index + 1}/${nextMediaIds.size} for $mediaId")
+                delay(PREFETCH_DELAY_MS)
             }
         }
     }
@@ -83,7 +75,7 @@ class QueueAudioPrefetchManager(
         val result = linkedSetOf<String>()
         var index = player.currentMediaItemIndex
         var guard = 0
-        while (result.size < count && guard < player.mediaItemCount + count) {
+        while (result.size < count && guard < player.mediaItemCount + count + 4) {
             guard += 1
             val nextIndex = timeline.getNextWindowIndex(index, player.repeatMode, player.shuffleModeEnabled)
             if (nextIndex == -1 || nextIndex == index) break
@@ -107,6 +99,6 @@ class QueueAudioPrefetchManager(
         private const val DEFAULT_PREFETCH_COUNT = 10
         private const val MAX_PREFETCH_COUNT = 10
         private const val PREFETCH_BYTES = 8L * 1024L * 1024L
-        private const val PREFETCH_DELAY_MS = 350L
+        private const val PREFETCH_DELAY_MS = 300L
     }
 }

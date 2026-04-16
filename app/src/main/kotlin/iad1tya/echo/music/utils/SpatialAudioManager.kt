@@ -88,10 +88,10 @@ class SpatialAudioManager(
             val magnetometer = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
 
             accelerometer?.let {
-                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
             }
             magnetometer?.let {
-                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
+                sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
             }
 
             Timber.d("SpatialAudioManager: Sensors started")

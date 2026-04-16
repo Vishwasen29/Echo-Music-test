@@ -2,6 +2,8 @@
 
 package iad1tya.echo.music.playback
 
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.SupervisorJob
 import android.Manifest
 import android.app.PendingIntent
 import android.content.ComponentName
@@ -266,7 +268,7 @@ class MusicService :
     private var wasPlayingBeforeAudioFocusLoss = false
     private var hasAudioFocus = false
 
-    private var scope = CoroutineScope(Dispatchers.Main) + Job()
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val binder = MusicBinder()
 
     private lateinit var connectivityManager: ConnectivityManager
@@ -274,7 +276,7 @@ class MusicService :
     val waitingForNetworkConnection = MutableStateFlow(false)
     private val isNetworkConnected = MutableStateFlow(false)
     private var lyricsPreloadManager: LyricsPreloadManager? = null
-    // CHATGPT_QUEUE_PREFETCH_PATCH
+    // CHATGPT_ALL_IN_ONE_HOTFIX
     private var queueAudioPrefetchManager: QueueAudioPrefetchManager? = null
 
     private val audioQuality by enumPreference(
@@ -361,8 +363,7 @@ class MusicService :
     @Inject
     @DownloadCache
     lateinit var downloadCache: SimpleCache
-
-    // CHATGPT_QUEUE_PREFETCH_PATCH
+    // CHATGPT_ALL_IN_ONE_HOTFIX
     @Inject
     lateinit var downloadUtil: DownloadUtil
 
@@ -661,7 +662,7 @@ class MusicService :
         // Initialize DLNA
         try {
             if (::dlnaManager.isInitialized) {
-                dlnaManager.start()
+                Log.d("MusicService", "DLNA auto-start disabled by hotfix to reduce background heat")
                 Log.d("MusicService", "DLNA service initialized")
                 
                 // Monitor DLNA device selection changes
@@ -807,7 +808,7 @@ class MusicService :
         // SponsorBlock Skipper
         scope.launch {
             while (isActive) {
-                delay(1000L)
+                delay(if (player.isPlaying && currentSkipSegments.value.isNotEmpty()) 1000L else 2500L)
                 if (player.isPlaying && currentSkipSegments.value.isNotEmpty()) {
                     val position = player.currentPosition / 1000f
                     val segment = currentSkipSegments.value.firstOrNull { position >= it.start && position < it.end }
@@ -1067,7 +1068,7 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                 }
-                delay(if (player.isPlaying) 1000L else 2500L)
+                delay(if (player.isPlaying) 2000L else 5000L)
             }
         }
         } catch (e: Exception) {
@@ -1578,7 +1579,7 @@ class MusicService :
         queue: Queue,
         playWhenReady: Boolean = true,
     ) {
-        if (!scope.isActive) scope = CoroutineScope(Dispatchers.Main) + Job()
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         currentQueue = queue
         queueTitle = null
         player.shuffleModeEnabled = false
@@ -2484,6 +2485,8 @@ class MusicService :
                 }
             }
         }
+
+        queueAudioPrefetchManager?.onQueuePositionChanged(player)
     }
 
     override fun onRepeatModeChanged(repeatMode: Int) {

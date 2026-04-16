@@ -87,7 +87,7 @@ class MusicHapticsManager @Inject constructor(
                         ) { /* unused */ }
                     },
                     // rate in mHz; request max supported up to 60 Hz
-                    Visualizer.getMaxCaptureRate().coerceAtMost(60_000),
+                    Visualizer.getMaxCaptureRate().coerceAtMost(20_000),
                     true,   // waveform
                     false   // fft
                 )

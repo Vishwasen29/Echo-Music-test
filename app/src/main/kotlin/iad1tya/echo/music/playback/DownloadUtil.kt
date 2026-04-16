@@ -242,25 +242,57 @@ constructor(
         )
     }
 
+    // CHATGPT_ALL_IN_ONE_HOTFIX_PREFETCH_START
+    private val prefetchCacheDataSourceFactory =
+        CacheDataSource
+            .Factory()
+            .setCache(playerCache)
+            .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
+            .setUpstreamDataSourceFactory(
+                OkHttpDataSource.Factory(
+                    OkHttpClient.Builder()
+                        .proxy(YouTube.proxy)
+                        .addInterceptor { chain ->
+                            val request = chain.request()
+                            val clientParam = request.url.queryParameter("c")
+                            val ua = StreamClientUtils.resolveUserAgent(clientParam)
+                            val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
+                            val builder = request.newBuilder().header("User-Agent", ua)
+                            originReferer.origin?.let { builder.header("Origin", it) }
+                            originReferer.referer?.let { builder.header("Referer", it) }
+                            chain.proceed(builder.build())
+                        }
+                        .proxyAuthenticator { _, response ->
+                            YouTube.proxyAuth?.let { auth ->
+                                response.request.newBuilder()
+                                    .header("Proxy-Authorization", auth)
+                                    .build()
+                            } ?: response.request
+                        }
+                        .build(),
+                ),
+            )
 
-    // CHATGPT_QUEUE_PREFETCH_PATCH
     suspend fun prefetchToPlayerCache(
         mediaId: String,
         maxBytes: Long = 8L * 1024L * 1024L,
     ): Boolean = withContext(Dispatchers.IO) {
         if (mediaId.isBlank() || maxBytes <= 0L) return@withContext false
+
         val targetLength = maxBytes.coerceAtLeast(256L * 1024L)
         if (playerCache.isCached(mediaId, 0, targetLength)) return@withContext true
 
+        val resolvedUrl = resolveStreamingUrlForPrefetch(mediaId, targetLength) ?: return@withContext false
+
         runCatching {
-            val dataSource = dataSourceFactory.createDataSource()
             val dataSpec = DataSpec.Builder()
-                .setUri("echo://$mediaId".toUri())
+                .setUri(resolvedUrl.toUri())
                 .setKey(mediaId)
                 .setPosition(0)
                 .setLength(targetLength)
                 .build()
 
+            val dataSource: CacheDataSource = prefetchCacheDataSourceFactory.createDataSource()
             CacheWriter(
                 dataSource,
                 dataSpec,
@@ -271,6 +303,39 @@ constructor(
         }.getOrElse { false }
     }
 
+    private suspend fun resolveStreamingUrlForPrefetch(mediaId: String, targetLength: Long): String? {
+        songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let { cached ->
+            return cached.first
+        }
+
+        resolveSaavnDownload(mediaId)?.let { resolved ->
+            songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
+            return resolved.url
+        }
+
+        val playbackData = YTPlayerUtils.playerResponseForPlayback(
+            mediaId,
+            audioQuality = audioQuality,
+            connectivityManager = connectivityManager,
+            preferredStreamClient = playerStreamClient,
+            webClientPoTokenEnabled = appContext.dataStore.get(WebClientPoTokenEnabledKey, false),
+            useVisitorData = appContext.dataStore.get(UseVisitorDataKey, false),
+            manualGvsPoToken = appContext.dataStore.get(PoTokenGvsKey),
+            manualPlayerPoToken = appContext.dataStore.get(PoTokenPlayerKey),
+        ).getOrNull() ?: return null
+
+        val upperBound = (targetLength - 1L).coerceAtLeast(0L)
+        val streamUrl = if (playbackData.streamUrl.contains("range=")) {
+            playbackData.streamUrl
+        } else {
+            "${playbackData.streamUrl}&range=0-$upperBound"
+        }
+
+        songUrlCache[mediaId] =
+            streamUrl to (System.currentTimeMillis() + playbackData.streamExpiresInSeconds * 1000L)
+        return streamUrl
+    }
+    // CHATGPT_ALL_IN_ONE_HOTFIX_PREFETCH_END
     val downloadNotificationHelper =
         DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
 
