@@ -286,16 +286,26 @@ object SaavnAudioResolver {
         val strippedTitle = normalizeTitleCore(title)
         val hasArtist = primaryArtist.isNotBlank()
 
-        val queries = linkedSetOf<String>()
-        queries += listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
-        if (!hasArtist) {
-            queries += title
-            queries += strippedTitle
+        val strictQueries = linkedSetOf<String>()
+        strictQueries += listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
+        strictQueries += listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
+        strictQueries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
+        strictQueries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
+
+        val fallbackQueries = linkedSetOf<String>()
+        fallbackQueries += title
+        fallbackQueries += strippedTitle
+
+        return buildList {
+            addAll(strictQueries.filter { it.isNotBlank() })
+            if (!hasArtist) {
+                addAll(fallbackQueries.filter { it.isNotBlank() })
+            } else {
+                // Safe fallback: title-only Saavn search is allowed, but acceptance still
+                // requires a strong original-artist match in isStrongAccept().
+                addAll(fallbackQueries.filter { it.isNotBlank() && it !in strictQueries })
+            }
         }
-        return queries.filter { it.isNotBlank() }
     }
 
     private fun search(query: String): List<Candidate> {
@@ -589,7 +599,7 @@ object SaavnAudioResolver {
         return if (requestedPrimaryArtist.isBlank()) {
             score >= 125 && titleStrong && durationClose
         } else {
-            score >= 150 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
+            score >= 138 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
         }
     }
 

@@ -2982,10 +2982,12 @@ class MusicService :
                 return@Factory dataSpec
             }
 
-            // Check if we have a valid cached URL (not expired)
-            songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
+            // Prefer JioSaavn before reusing a cached YouTube URL.
+            val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
+            val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
+            if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                return@Factory dataSpec.withUri(it.first.toUri())
+                return@Factory dataSpec.withUri(cachedUrlEntry.first.toUri())
             }
 
             runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
@@ -2993,6 +2995,11 @@ class MusicService :
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
                 return@Factory dataSpec.withUri(resolved.url.toUri())
+            }
+
+            cachedUrlEntry?.let {
+                scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
+                return@Factory dataSpec.withUri(it.first.toUri())
             }
 
             // Need to fetch a new URL - either first time or URL expired
@@ -3656,8 +3663,10 @@ class MusicService :
 
     suspend fun getStreamUrl
     suspend fun getStreamUrl(mediaId: String): String? {
-        songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
-            return it.first
+        val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
+        val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
+        if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
+            return cachedUrlEntry.first
         }
 
         return try {
@@ -3665,6 +3674,10 @@ class MusicService :
                 database.query { upsert(resolved.formatEntity) }
                 songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
                 return resolved.url
+            }
+
+            cachedUrlEntry?.let {
+                return it.first
             }
 
             val isUploadedSong = database.song(mediaId).first()?.song?.isUploaded == true
