@@ -73,13 +73,6 @@ fun ShowMediaInfo(videoId: String) {
     var song by remember { mutableStateOf<Song?>(null) }
     var currentFormat by remember { mutableStateOf<FormatEntity?>(null) }
 
-    val sourceSummary = remember(currentFormat?.itag, currentFormat?.playbackUrl, currentFormat?.bitrate) {
-        listOfNotNull(
-            describeAudioSource(currentFormat),
-            currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" }
-        ).joinToString(" • ").takeIf { it.isNotBlank() }
-    }
-
     LaunchedEffect(videoId, currentFormat?.itag, currentFormat?.playbackUrl) {
         if (isSaavnFormat(currentFormat)) {
             info = null
@@ -176,16 +169,6 @@ fun ShowMediaInfo(videoId: String) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    sourceSummary?.let {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                     val sourceSummary = listOfNotNull(
                         describeAudioSource(currentFormat),
                         currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },

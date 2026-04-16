@@ -323,7 +323,7 @@ fun BottomSheetPlayer(
     LaunchedEffect(mediaMetadata?.id, playerBackground) {
         if (playerBackground == PlayerBackgroundStyle.GRADIENT || playerBackground == PlayerBackgroundStyle.GLOW_ANIMATED) {
             val currentMetadata = mediaMetadata
-            if (currentMetadata != null && displayThumbnailUrl != null) {
+            if (currentMetadata != null && currentMetadata.thumbnailUrl != null) {
                 val cacheKey = if (playerBackground == PlayerBackgroundStyle.GLOW_ANIMATED)
                     "glow_${currentMetadata.id}" else currentMetadata.id
                 val cachedColors = gradientColorsCache[cacheKey]
@@ -333,7 +333,7 @@ fun BottomSheetPlayer(
                 }
                 withContext(Dispatchers.IO) {
                     val request = ImageRequest.Builder(context)
-                        .data(displayThumbnailUrl)
+                        .data(currentMetadata.thumbnailUrl)
                         .size(100, 100)
                         .allowHardware(false)
                         .memoryCacheKey("gradient_${currentMetadata.id}")
@@ -678,7 +678,7 @@ fun BottomSheetPlayer(
                 when (playerBackground) {
                     PlayerBackgroundStyle.BLUR -> {
                         AnimatedContent(
-                            targetState = displayThumbnailUrl,
+                            targetState = mediaMetadata?.thumbnailUrl,
                             transitionSpec = { fadeIn(tween(800)).togetherWith(fadeOut(tween(800))) },
                             label = "blurBackground"
                         ) { thumbnailUrl ->

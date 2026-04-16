@@ -279,20 +279,17 @@ object SaavnAudioResolver {
         val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
         val album = mediaMetadata.album?.title?.trim().orEmpty()
         val strippedTitle = normalizeTitleCore(title)
-        val hasArtist = primaryArtist.isNotBlank()
+        val hasArtistMetadata = primaryArtist.isNotBlank()
 
-        val queries = linkedSetOf<String>()
-        queries += listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        queries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
-
-        if (!hasArtist) {
-            queries += title
-            queries += strippedTitle
-        }
-
-        return queries.filter { it.isNotBlank() }
+        return linkedSetOf(
+            listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim(),
+            listOf(title, album).filter { it.isNotBlank() && !hasArtistMetadata }.joinToString(" ").trim(),
+            title.takeIf { !hasArtistMetadata }.orEmpty(),
+            strippedTitle.takeIf { !hasArtistMetadata }.orEmpty(),
+        ).filter { it.isNotBlank() }
     }
 
     private fun search(query: String): List<Candidate> {
@@ -568,35 +565,6 @@ object SaavnAudioResolver {
             tokenSimilarity(candidateTitle, requestedTitle) >= 34
 
         return titleCloseEnough && score >= 125
-    }
-
-    private fun hasStrongPrimaryArtistMatch(candidate: Candidate, requested: MediaMetadata): Boolean {
-        val requestedArtists = requested.artists.map { normalizeArtist(it.name) }.filter { it.isNotBlank() }
-        val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
-        val requestedPrimaryArtist = requestedArtists.firstOrNull().orEmpty()
-        if (requestedPrimaryArtist.isBlank()) return true
-        val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
-        return candidatePrimaryArtist == requestedPrimaryArtist ||
-            candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
-    }
-
-    private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
-        val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
-        val requestedTitle = normalizeTitleCore(requested.title)
-        val candidateTitle = normalizeTitleCore(candidate.title)
-        val titleStrong = candidateTitle == requestedTitle ||
-            candidateTitle.contains(requestedTitle) ||
-            requestedTitle.contains(candidateTitle) ||
-            tokenSimilarity(candidateTitle, requestedTitle) >= 34
-        val durationClose = requested.duration <= 0 ||
-            candidate.duration == null ||
-            kotlin.math.abs(candidate.duration - requested.duration) <= 12
-
-        return if (requestedPrimaryArtist.isBlank()) {
-            score >= 125 && titleStrong && durationClose
-        } else {
-            score >= 150 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
-        }
     }
 
     private fun score(candidate: Candidate, requested: MediaMetadata): Int {

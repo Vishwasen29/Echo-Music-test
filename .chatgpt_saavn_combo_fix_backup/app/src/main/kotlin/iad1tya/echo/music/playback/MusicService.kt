@@ -352,49 +352,6 @@ class MusicService :
 
 
 
-    private fun buildResolvedSaavnMetadata(
-        mediaId: String,
-        baseMetadata: iad1tya.echo.music.models.MediaMetadata?,
-        resolved: SaavnAudioResolver.ResolvedStream,
-    ): iad1tya.echo.music.models.MediaMetadata {
-        val resolvedArtists = resolved.matchedArtists
-            .filter { it.isNotBlank() }
-            .map { iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = it) }
-
-        val artists = when {
-            baseMetadata?.artists?.isNotEmpty() == true -> baseMetadata.artists
-            resolvedArtists.isNotEmpty() -> resolvedArtists
-            else -> listOf(iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = "Unknown"))
-        }
-
-        val albumTitle = resolved.albumTitle ?: baseMetadata?.album?.title
-        val album = when {
-            albumTitle == null -> baseMetadata?.album
-            baseMetadata?.album != null -> baseMetadata.album.copy(title = albumTitle)
-            else -> iad1tya.echo.music.models.MediaMetadata.Album(
-                id = "saavn:${resolved.songId}",
-                title = albumTitle,
-            )
-        }
-
-        return iad1tya.echo.music.models.MediaMetadata(
-            id = mediaId,
-            title = baseMetadata?.title?.takeIf { it.isNotBlank() } ?: resolved.matchedTitle,
-            artists = artists,
-            duration = resolved.durationSeconds ?: baseMetadata?.duration ?: -1,
-            thumbnailUrl = resolved.thumbnailUrl ?: baseMetadata?.thumbnailUrl,
-            album = album,
-            setVideoId = baseMetadata?.setVideoId,
-            explicit = baseMetadata?.explicit ?: false,
-            isVideoSong = baseMetadata?.isVideoSong ?: false,
-            liked = baseMetadata?.liked ?: false,
-            likedDate = baseMetadata?.likedDate,
-            inLibrary = baseMetadata?.inLibrary,
-            libraryAddToken = baseMetadata?.libraryAddToken,
-            libraryRemoveToken = baseMetadata?.libraryRemoveToken,
-        )
-    }
-
     val playerVolume = MutableStateFlow(1f)
     val eqCapabilities = MutableStateFlow<EqCapabilities?>(null)
 
@@ -3508,12 +3465,10 @@ class MusicService :
     }
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-        if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) return null
         if (forcedYoutubeFallbackIds.contains(mediaId)) return null
         if (mediaId.startsWith("saavn:")) {
             val saavnId = mediaId.removePrefix("saavn:")
             val resolved = SaavnAudioResolver.resolveById(saavnId, audioQuality).getOrNull() ?: return null
-            persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = resolveMetadataForMediaId(mediaId), resolved = resolved))
             persistResolvedSaavnMetadata(mediaId, resolveMetadataForMediaId(mediaId), resolved)
             val bitrate = resolved.bitrate ?: when (audioQuality) {
                 iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
@@ -3538,7 +3493,6 @@ class MusicService :
         }
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
-        persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = metadata, resolved = resolved))
         persistResolvedSaavnMetadata(mediaId, metadata, resolved)
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
