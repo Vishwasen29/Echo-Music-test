@@ -217,9 +217,46 @@ constructor(
         else -> "mp3"
     }
 
-    private suspend fun resolveSaavnDownload(mediaId: String): ExternalResolvedUrl? {
-        val metadata = database.song(mediaId).first()?.toMediaMetadata() ?: return null
+    private fun buildResolvedSaavnMetadata(
+        baseMetadata: iad1tya.echo.music.models.MediaMetadata,
+        resolved: SaavnAudioResolver.ResolvedStream,
+    ): iad1tya.echo.music.models.MediaMetadata {
+        val resolvedArtists = resolved.matchedArtists
+            .filter { it.isNotBlank() }
+            .map { iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = it) }
+
+        val artists = when {
+            baseMetadata.artists.isNotEmpty() -> baseMetadata.artists
+            resolvedArtists.isNotEmpty() -> resolvedArtists
+            else -> listOf(iad1tya.echo.music.models.MediaMetadata.Artist(id = null, name = "Unknown"))
+        }
+
+        val albumTitle = resolved.albumTitle ?: baseMetadata.album?.title
+        val album = when {
+            albumTitle == null -> baseMetadata.album
+            baseMetadata.album != null -> baseMetadata.album.copy(title = albumTitle)
+            else -> iad1tya.echo.music.models.MediaMetadata.Album(
+                id = "saavn:${resolved.songId}",
+                title = albumTitle,
+            )
+        }
+
+        return baseMetadata.copy(
+            title = baseMetadata.title.takeIf { it.isNotBlank() } ?: resolved.matchedTitle,
+            artists = artists,
+            duration = resolved.durationSeconds ?: baseMetadata.duration,
+            thumbnailUrl = resolved.thumbnailUrl ?: baseMetadata.thumbnailUrl,
+            album = album,
+        )
+    }
+
+    private suspend fun resolveSaavnDownload(
+        mediaId: String,
+        metadataOverride: iad1tya.echo.music.models.MediaMetadata? = null,
+    ): ExternalResolvedUrl? {
+        val metadata = metadataOverride ?: database.song(mediaId).first()?.toMediaMetadata() ?: return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
+        val resolvedMetadata = buildResolvedSaavnMetadata(metadata, resolved)
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             AudioQuality.LOW -> 96_000
             AudioQuality.AUTO, AudioQuality.HIGH -> 320_000
@@ -227,7 +264,7 @@ constructor(
         return ExternalResolvedUrl(
             url = resolved.url,
             expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-            metadata = metadata,
+            metadata = resolvedMetadata,
             formatEntity = FormatEntity(
                 id = mediaId,
                 itag = -320,
@@ -237,7 +274,7 @@ constructor(
                 sampleRate = resolved.sampleRate,
                 contentLength = 0L,
                 loudnessDb = null,
-                playbackUrl = null,
+                playbackUrl = "saavn://${resolved.songId}",
             ),
         )
     }
@@ -275,6 +312,7 @@ constructor(
 
     suspend fun prefetchToPlayerCache(
         mediaId: String,
+        metadata: iad1tya.echo.music.models.MediaMetadata? = null,
         maxBytes: Long = 8L * 1024L * 1024L,
     ): Boolean = withContext(Dispatchers.IO) {
         if (mediaId.isBlank() || maxBytes <= 0L) return@withContext false
@@ -282,7 +320,11 @@ constructor(
         val targetLength = maxBytes.coerceAtLeast(256L * 1024L)
         if (playerCache.isCached(mediaId, 0, targetLength)) return@withContext true
 
-        val resolvedUrl = resolveStreamingUrlForPrefetch(mediaId, targetLength) ?: return@withContext false
+        val resolvedUrl = resolveStreamingUrlForPrefetch(
+            mediaId = mediaId,
+            targetLength = targetLength,
+            metadata = metadata,
+        ) ?: return@withContext false
 
         runCatching {
             val dataSpec = DataSpec.Builder()
@@ -303,12 +345,37 @@ constructor(
         }.getOrElse { false }
     }
 
-    private suspend fun resolveStreamingUrlForPrefetch(mediaId: String, targetLength: Long): String? {
+    private suspend fun resolveStreamingUrlForPrefetch(
+        mediaId: String,
+        targetLength: Long,
+        metadata: iad1tya.echo.music.models.MediaMetadata? = null,
+    ): String? {
         songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let { cached ->
             return cached.first
         }
 
-        resolveSaavnDownload(mediaId)?.let { resolved ->
+        resolveSaavnDownload(mediaId, metadata)?.let { resolved ->
+            database.query {
+                upsert(resolved.formatEntity)
+
+                val now = LocalDateTime.now()
+                val existing = getSongByIdBlocking(mediaId)?.song
+                val updatedSong = if (existing != null) {
+                    existing.copy(
+                        title = resolved.metadata.title,
+                        duration = resolved.metadata.duration,
+                        thumbnailUrl = resolved.metadata.thumbnailUrl,
+                        dateDownload = existing.dateDownload ?: now,
+                    )
+                } else {
+                    resolved.metadata.toSongEntity().copy(
+                        dateDownload = now,
+                        isDownloaded = false,
+                    )
+                }
+                upsert(updatedSong)
+            }
+
             songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
             return resolved.url
         }

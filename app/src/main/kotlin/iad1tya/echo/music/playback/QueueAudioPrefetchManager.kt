@@ -3,6 +3,7 @@ package iad1tya.echo.music.playback
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.Player
+import iad1tya.echo.music.extensions.metadata
 import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
 import iad1tya.echo.music.constants.QueueAudioPrefetchEnabledKey
 import iad1tya.echo.music.utils.NetworkConnectivityObserver
@@ -42,28 +43,34 @@ class QueueAudioPrefetchManager(
                 return@launch
             }
 
-            val nextMediaIds = withContext(Dispatchers.Main.immediate) {
-                getNextMediaIds(player, prefetchCount)
+            val nextTargets = withContext(Dispatchers.Main.immediate) {
+                getNextMediaTargets(player, prefetchCount)
             }
-            if (nextMediaIds.isEmpty()) return@launch
+            if (nextTargets.isEmpty()) return@launch
 
-            nextMediaIds.forEachIndexed { index, mediaId ->
+            nextTargets.forEachIndexed { index, target ->
                 if (!isActive) return@launch
                 runCatching {
                     downloadUtil.prefetchToPlayerCache(
-                        mediaId = mediaId,
+                        mediaId = target.mediaId,
+                        metadata = target.metadata,
                         maxBytes = PREFETCH_BYTES,
                     )
                 }.onFailure {
-                    Log.w(TAG, "Prefetch failed for $mediaId", it)
+                    Log.w(TAG, "Prefetch failed for ${target.mediaId}", it)
                 }
-                Log.d(TAG, "Prefetch scheduled ${index + 1}/${nextMediaIds.size} for $mediaId")
+                Log.d(TAG, "Prefetch scheduled ${index + 1}/${nextTargets.size} for ${target.mediaId}")
                 delay(PREFETCH_DELAY_MS)
             }
         }
     }
 
-    private fun getNextMediaIds(player: Player, count: Int): List<String> {
+    private data class PrefetchTarget(
+        val mediaId: String,
+        val metadata: iad1tya.echo.music.models.MediaMetadata?,
+    )
+
+    private fun getNextMediaTargets(player: Player, count: Int): List<PrefetchTarget> {
         if (count <= 0 || player.currentMediaItemIndex == -1 || player.mediaItemCount <= 1) {
             return emptyList()
         }
@@ -76,7 +83,7 @@ class QueueAudioPrefetchManager(
         val repeatMode = player.repeatMode
         val shuffleModeEnabled = player.shuffleModeEnabled
 
-        val result = linkedSetOf<String>()
+        val result = linkedMapOf<String, PrefetchTarget>()
         var index = player.currentMediaItemIndex
         var guard = 0
         while (result.size < count && guard < mediaItemCount + count + 4) {
@@ -84,12 +91,19 @@ class QueueAudioPrefetchManager(
             val nextIndex = timeline.getNextWindowIndex(index, repeatMode, shuffleModeEnabled)
             if (nextIndex == -1 || nextIndex == index) break
             index = nextIndex
-            val mediaId = player.getMediaItemAt(index).mediaId
+            val mediaItem = player.getMediaItemAt(index)
+            val mediaId = mediaItem.mediaId
             if (mediaId.isNotBlank() && mediaId != currentMediaId) {
-                result.add(mediaId)
+                result.putIfAbsent(
+                    mediaId,
+                    PrefetchTarget(
+                        mediaId = mediaId,
+                        metadata = mediaItem.metadata,
+                    ),
+                )
             }
         }
-        return result.toList()
+        return result.values.toList()
     }
 
     fun destroy() {
