@@ -599,7 +599,7 @@ object SaavnAudioResolver {
         return if (requestedPrimaryArtist.isBlank()) {
             score >= 125 && titleStrong && durationClose
         } else {
-            score >= 138 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
+            score >= 128 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
         }
     }
 

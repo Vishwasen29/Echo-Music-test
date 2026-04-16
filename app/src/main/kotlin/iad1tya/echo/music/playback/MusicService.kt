@@ -326,9 +326,6 @@ class MusicService :
     private var currentQueueTotalCount: Int? = null
 
 
-
-
-
     private fun isSaavnBackedTrack(mediaId: String): Boolean {
         val format = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
         return format?.playbackUrl?.startsWith("saavn://") == true || ((format?.itag ?: 0) < 0)
@@ -353,9 +350,6 @@ class MusicService :
         player.prepare()
         player.playWhenReady = true
     }
-
-    private fun persistSaavnMetadata(
-
 
     // CHATGPT_SAAVN_TRACE_HELPERS_START
     private fun updatePlaybackSourceTrace(
@@ -394,6 +388,7 @@ class MusicService :
     }
     // CHATGPT_SAAVN_TRACE_HELPERS_END
 
+    private fun persistSaavnMetadata(
         mediaId: String,
         saavnMetadata: iad1tya.echo.music.models.MediaMetadata,
     ) {
@@ -406,7 +401,6 @@ class MusicService :
             }
         }
     }
-
 
 
     private fun buildResolvedSaavnMetadata(
@@ -3661,7 +3655,6 @@ class MusicService :
         )
     }
 
-    suspend fun getStreamUrl
     suspend fun getStreamUrl(mediaId: String): String? {
         val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
         val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
@@ -3703,7 +3696,7 @@ class MusicService :
                 null
             }
         } catch (e: Exception) {
-            Log.e("MusicService", "Failed to resolve URL for Cast: ${{e.message}}")
+            Log.e("MusicService", "Failed to resolve URL for Cast: ${e.message}")
             null
         }
     }
