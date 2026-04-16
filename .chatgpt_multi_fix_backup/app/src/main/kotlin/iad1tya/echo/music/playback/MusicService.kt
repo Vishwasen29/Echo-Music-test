@@ -167,7 +167,6 @@ import iad1tya.echo.music.constants.WebClientPoTokenEnabledKey
 import iad1tya.echo.music.db.MusicDatabase
 import iad1tya.echo.music.db.entities.Event
 import iad1tya.echo.music.db.entities.FormatEntity
-import iad1tya.echo.music.db.entities.SongEntity
 import iad1tya.echo.music.db.entities.LyricsEntity
 import iad1tya.echo.music.db.entities.RelatedSongMap
 import iad1tya.echo.music.di.DownloadCache
@@ -2888,13 +2887,11 @@ class MusicService :
                 return@Factory dataSpec.withUri(it.first.toUri())
             }
 
-            if (!forcedYoutubeFallbackIds.contains(mediaId)) {
-                runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
-                    database.query { upsert(resolved.formatEntity) }
-                    scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                    songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
-                    return@Factory dataSpec.withUri(resolved.url.toUri())
-                }
+            runBlocking(Dispatchers.IO) { resolveSaavnUrl(mediaId) }?.let { resolved ->
+                database.query { upsert(resolved.formatEntity) }
+                scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
+                songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
+                return@Factory dataSpec.withUri(resolved.url.toUri())
             }
 
             // Need to fetch a new URL - either first time or URL expired
@@ -3435,41 +3432,10 @@ class MusicService :
         else -> "mp3"
     }
 
-    private suspend fun persistResolvedSaavnMetadata(
-        mediaId: String,
-        baseMetadata: iad1tya.echo.music.models.MediaMetadata?,
-        resolved: SaavnAudioResolver.ResolvedStream,
-    ) {
-        val existing = database.song(mediaId).first()?.song
-        val thumbnailUrl = resolved.thumbnailUrl ?: existing?.thumbnailUrl ?: baseMetadata?.thumbnailUrl
-        val albumName = resolved.albumTitle ?: existing?.albumName ?: baseMetadata?.album?.title
-
-        val updatedSong = existing?.copy(
-            title = existing.title.ifBlank { baseMetadata?.title ?: resolved.matchedTitle },
-            duration = resolved.durationSeconds ?: existing.duration,
-            thumbnailUrl = thumbnailUrl ?: existing.thumbnailUrl,
-            albumName = albumName ?: existing.albumName,
-        ) ?: SongEntity(
-            id = mediaId,
-            title = baseMetadata?.title ?: resolved.matchedTitle,
-            duration = resolved.durationSeconds ?: baseMetadata?.duration ?: -1,
-            thumbnailUrl = thumbnailUrl,
-            albumId = baseMetadata?.album?.id,
-            albumName = albumName,
-            explicit = false,
-            libraryAddToken = baseMetadata?.libraryAddToken,
-            libraryRemoveToken = baseMetadata?.libraryRemoveToken,
-        )
-
-        database.query { upsert(updatedSong) }
-    }
-
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-        if (forcedYoutubeFallbackIds.contains(mediaId)) return null
         if (mediaId.startsWith("saavn:")) {
             val saavnId = mediaId.removePrefix("saavn:")
             val resolved = SaavnAudioResolver.resolveById(saavnId, audioQuality).getOrNull() ?: return null
-            persistResolvedSaavnMetadata(mediaId, resolveMetadataForMediaId(mediaId), resolved)
             val bitrate = resolved.bitrate ?: when (audioQuality) {
                 iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
                 iad1tya.echo.music.constants.AudioQuality.AUTO,
@@ -3493,7 +3459,6 @@ class MusicService :
         }
         val metadata = resolveMetadataForMediaId(mediaId) ?: return null
         val resolved = SaavnAudioResolver.resolve(metadata, audioQuality).getOrNull() ?: return null
-        persistResolvedSaavnMetadata(mediaId, metadata, resolved)
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
             iad1tya.echo.music.constants.AudioQuality.AUTO,
@@ -3522,12 +3487,10 @@ class MusicService :
         }
 
         return try {
-            if (!forcedYoutubeFallbackIds.contains(mediaId)) {
-                resolveSaavnUrl(mediaId)?.let { resolved ->
-                    database.query { upsert(resolved.formatEntity) }
-                    songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
-                    return resolved.url
-                }
+            resolveSaavnUrl(mediaId)?.let { resolved ->
+                database.query { upsert(resolved.formatEntity) }
+                songUrlCache[mediaId] = resolved.url to resolved.expiresAtMs
+                return resolved.url
             }
 
             val isUploadedSong = database.song(mediaId).first()?.song?.isUploaded == true

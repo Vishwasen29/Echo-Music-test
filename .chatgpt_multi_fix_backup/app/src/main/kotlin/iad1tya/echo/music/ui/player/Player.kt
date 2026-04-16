@@ -273,14 +273,6 @@ fun BottomSheetPlayer(
                 ?.takeIf { it > 0 }
                 ?.let { "${(it / 1000f).roundToInt()} kbps" }
         }
-        val sourceText = remember(currentFormat?.itag, currentFormat?.playbackUrl) {
-            when {
-                currentFormat == null -> null
-                currentFormat?.playbackUrl?.startsWith("saavn://") == true || ((currentFormat?.itag ?: 0) < 0) -> "JioSaavn"
-                else -> "YouTube Music"
-            }
-        }
-        val displayThumbnailUrl = currentSong?.song?.thumbnailUrl ?: mediaMetadata?.thumbnailUrl
         val currentTrackCounterCompact = remember(
             playerConnection.player.currentMediaItemIndex,
             playerConnection.player.mediaItemCount,
@@ -890,7 +882,7 @@ fun BottomSheetPlayer(
                             modifier = Modifier.padding(top = 48.dp)
                         ) {
                             AsyncImage(
-                                model = displayThumbnailUrl,
+                                model = mediaMetadata.thumbnailUrl,
                                 contentDescription = null,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
@@ -910,8 +902,8 @@ fun BottomSheetPlayer(
                     // Detect if thumbnail is rectangular (video) or square (audio-only)
                     var isRectangularThumbnail by remember { mutableStateOf(false) }
                     
-                    LaunchedEffect(displayThumbnailUrl) {
-                        displayThumbnailUrl?.let { thumbnailUrl ->
+                    LaunchedEffect(mediaMetadata.thumbnailUrl) {
+                        mediaMetadata.thumbnailUrl?.let { thumbnailUrl ->
                             try {
                                 val imageLoader = coil3.ImageLoader.Builder(context).build()
                                 val request = ImageRequest.Builder(context)
@@ -1019,39 +1011,19 @@ fun BottomSheetPlayer(
                             )
                         }
 
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            sourceText?.let { source ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(TextBackgroundColor.copy(alpha = 0.14f))
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Text(
-                                        text = source,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = TextBackgroundColor,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
-                            }
-                            bitrateText?.let { bitrate ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(999.dp))
-                                        .background(TextBackgroundColor.copy(alpha = 0.14f))
-                                        .padding(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Text(
-                                        text = bitrate,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = TextBackgroundColor,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                }
+                        bitrateText?.let { bitrate ->
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(999.dp))
+                                    .background(TextBackgroundColor.copy(alpha = 0.14f))
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text(
+                                    text = bitrate,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TextBackgroundColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
                             }
                         }
                     }

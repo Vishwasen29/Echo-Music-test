@@ -73,12 +73,8 @@ fun ShowMediaInfo(videoId: String) {
     var song by remember { mutableStateOf<Song?>(null) }
     var currentFormat by remember { mutableStateOf<FormatEntity?>(null) }
 
-    LaunchedEffect(videoId, currentFormat?.itag, currentFormat?.playbackUrl) {
-        if (isSaavnFormat(currentFormat)) {
-            info = null
-        } else {
-            YouTube.getMediaInfo(videoId).onSuccess { info = it }
-        }
+    LaunchedEffect(videoId) {
+        YouTube.getMediaInfo(videoId).onSuccess { info = it }
     }
     LaunchedEffect(videoId) {
         database.song(videoId).collect { song = it }
@@ -169,20 +165,6 @@ fun ShowMediaInfo(videoId: String) {
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    val sourceSummary = listOfNotNull(
-                        describeAudioSource(currentFormat),
-                        currentFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },
-                    ).joinToString(" • ")
-                    if (sourceSummary.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = sourceSummary,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
                 }
             }
 
