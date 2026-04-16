@@ -69,6 +69,7 @@ import iad1tya.echo.music.ui.menu.YouTubeAlbumMenu
 import iad1tya.echo.music.ui.menu.YouTubeArtistMenu
 import iad1tya.echo.music.ui.menu.YouTubePlaylistMenu
 import iad1tya.echo.music.ui.menu.YouTubeSongMenu
+import iad1tya.echo.music.ui.menu.SaavnSongMenu
 import iad1tya.echo.music.viewmodels.OnlineSearchViewModel
 import kotlinx.coroutines.launch
 import androidx.compose.foundation.clickable
@@ -264,12 +265,23 @@ fun OnlineSearchResult(
                 items = saavnResults,
                 key = { "saavn_${it.sourceSongId}" },
             ) { saavnSong ->
+                val saavnLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    menuState.show {
+                        SaavnSongMenu(
+                            song = saavnSong,
+                            onDismiss = menuState::dismiss,
+                        )
+                    }
+                }
                 SaavnSearchRow(
                     song = saavnSong,
                     isActive = mediaMetadata?.id == "saavn:${saavnSong.sourceSongId}",
                     onClick = {
                         playerConnection.playQueue(SaavnQueue(saavnSong))
                     },
+                    onLongClick = saavnLongClick,
+                    onMenuClick = saavnLongClick,
                     modifier = Modifier.animateItem(),
                 )
             }
@@ -372,6 +384,8 @@ private fun SaavnSearchRow(
     song: SaavnAudioResolver.SaavnSearchResult,
     isActive: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    onMenuClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     ListItem(
@@ -423,14 +437,26 @@ private fun SaavnSearchRow(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Spacer(Modifier.width(8.dp))
-                Icon(
-                    painter = painterResource(R.drawable.play),
-                    contentDescription = null,
-                )
+                if (onMenuClick != null) {
+                    IconButton(onClick = onMenuClick) {
+                        Icon(
+                            painter = painterResource(R.drawable.more_vert),
+                            contentDescription = null,
+                        )
+                    }
+                } else {
+                    Icon(
+                        painter = painterResource(R.drawable.play),
+                        contentDescription = null,
+                    )
+                }
             }
         },
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     )
 }
