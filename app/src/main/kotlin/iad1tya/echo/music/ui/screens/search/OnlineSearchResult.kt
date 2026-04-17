@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
@@ -20,20 +19,29 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.navigation.NavController
 import com.echo.innertube.YouTube.SearchFilter.Companion.FILTER_ALBUM
@@ -50,13 +58,16 @@ import com.echo.innertube.models.PodcastItem
 import com.echo.innertube.models.SongItem
 import com.echo.innertube.models.WatchEndpoint
 import com.echo.innertube.models.YTItem
+import iad1tya.echo.music.LocalDatabase
 import iad1tya.echo.music.LocalPlayerAwareWindowInsets
 import iad1tya.echo.music.LocalPlayerConnection
 import iad1tya.echo.music.R
 import iad1tya.echo.music.constants.AppBarHeight
 import iad1tya.echo.music.constants.SearchFilterHeight
+import iad1tya.echo.music.db.entities.FormatEntity
 import iad1tya.echo.music.extensions.togglePlayPause
 import iad1tya.echo.music.models.toMediaMetadata
+import iad1tya.echo.music.playback.queues.SaavnQueue
 import iad1tya.echo.music.playback.queues.YouTubeQueue
 import iad1tya.echo.music.ui.component.ChipsRow
 import iad1tya.echo.music.ui.component.EmptyPlaceholder
@@ -65,30 +76,15 @@ import iad1tya.echo.music.ui.component.NavigationTitle
 import iad1tya.echo.music.ui.component.YouTubeListItem
 import iad1tya.echo.music.ui.component.shimmer.ListItemPlaceHolder
 import iad1tya.echo.music.ui.component.shimmer.ShimmerHost
+import iad1tya.echo.music.ui.menu.SaavnSongMenu
 import iad1tya.echo.music.ui.menu.YouTubeAlbumMenu
 import iad1tya.echo.music.ui.menu.YouTubeArtistMenu
 import iad1tya.echo.music.ui.menu.YouTubePlaylistMenu
 import iad1tya.echo.music.ui.menu.YouTubeSongMenu
-import iad1tya.echo.music.ui.menu.SaavnSongMenu
-import iad1tya.echo.music.viewmodels.OnlineSearchViewModel
-import kotlinx.coroutines.launch
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.Text
-import iad1tya.echo.music.playback.queues.SaavnQueue
 import iad1tya.echo.music.utils.SaavnAudioResolver
+import iad1tya.echo.music.viewmodels.OnlineSearchViewModel
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -128,21 +124,16 @@ fun OnlineSearchResult(
     LaunchedEffect(searchSummary, viewModel.autoplay) {
         if (viewModel.autoplay && searchSummary != null) {
             val item = searchSummary!!.summaries.flatMap { it.items }
-                .firstOrNull { it is SongItem } // Prioritize SongItem
-                ?: searchSummary!!.summaries.flatMap { it.items }.firstOrNull() // Fallback to any
+                .firstOrNull { it is SongItem }
+                ?: searchSummary!!.summaries.flatMap { it.items }.firstOrNull()
 
-            if (item != null) {
-                if (item is SongItem) {
-                     if (item.id != mediaMetadata?.id) {
-                         playerConnection.playQueue(
-                             YouTubeQueue(
-                                 WatchEndpoint(videoId = item.id),
-                                 item.toMediaMetadata()
-                             )
-                         )
-                     }
-                }
-                // Mark consumed
+            if (item is SongItem && item.id != mediaMetadata?.id) {
+                playerConnection.playQueue(
+                    YouTubeQueue(
+                        WatchEndpoint(videoId = item.id),
+                        item.toMediaMetadata(),
+                    )
+                )
                 viewModel.autoplay = false
             }
         }
@@ -153,68 +144,38 @@ fun OnlineSearchResult(
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             menuState.show {
                 when (item) {
-                    is SongItem ->
-                        YouTubeSongMenu(
-                            song = item,
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
-
-                    is AlbumItem ->
-                        YouTubeAlbumMenu(
-                            albumItem = item,
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
-
-                    is ArtistItem ->
-                        YouTubeArtistMenu(
-                            artist = item,
-                            onDismiss = menuState::dismiss,
-                        )
-
-                    is PlaylistItem ->
-                        YouTubePlaylistMenu(
-                            playlist = item,
-                            coroutineScope = coroutineScope,
-                            onDismiss = menuState::dismiss,
-                        )
-                    is EpisodeItem ->
-                        YouTubeSongMenu(
-                            song = item.asSongItem(),
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
-                    is PodcastItem ->
-                        YouTubePlaylistMenu(
-                            playlist = item.asPlaylistItem(),
-                            coroutineScope = coroutineScope,
-                            onDismiss = menuState::dismiss,
-                        )
+                    is SongItem -> YouTubeSongMenu(song = item, navController = navController, onDismiss = menuState::dismiss)
+                    is AlbumItem -> YouTubeAlbumMenu(albumItem = item, navController = navController, onDismiss = menuState::dismiss)
+                    is ArtistItem -> YouTubeArtistMenu(artist = item, onDismiss = menuState::dismiss)
+                    is PlaylistItem -> YouTubePlaylistMenu(playlist = item, coroutineScope = coroutineScope, onDismiss = menuState::dismiss)
+                    is EpisodeItem -> YouTubeSongMenu(song = item.asSongItem(), navController = navController, onDismiss = menuState::dismiss)
+                    is PodcastItem -> YouTubePlaylistMenu(playlist = item.asPlaylistItem(), coroutineScope = coroutineScope, onDismiss = menuState::dismiss)
                 }
             }
         }
+
         YouTubeListItem(
             item = item,
-            isActive =
-            when (item) {
+            isActive = when (item) {
                 is SongItem -> mediaMetadata?.id == item.id
                 is AlbumItem -> mediaMetadata?.album?.id == item.id
                 else -> false
             },
             isPlaying = isPlaying,
             trailingContent = {
-                IconButton(
-                    onClick = longClick,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.more_vert),
-                        contentDescription = null,
-                    )
+                when (item) {
+                    is SongItem -> YouTubeSearchTrailing(songId = item.id, onMenuClick = longClick)
+                    else -> {
+                        IconButton(onClick = longClick) {
+                            Icon(
+                                painter = painterResource(R.drawable.more_vert),
+                                contentDescription = null,
+                            )
+                        }
+                    }
                 }
             },
-            modifier =
-            Modifier
+            modifier = Modifier
                 .combinedClickable(
                     onClick = {
                         when (item) {
@@ -225,7 +186,7 @@ fun OnlineSearchResult(
                                     playerConnection.playQueue(
                                         YouTubeQueue(
                                             WatchEndpoint(videoId = item.id),
-                                            item.toMediaMetadata()
+                                            item.toMediaMetadata(),
                                         )
                                     )
                                 }
@@ -237,7 +198,7 @@ fun OnlineSearchResult(
                             is EpisodeItem -> playerConnection.playQueue(
                                 YouTubeQueue(
                                     WatchEndpoint(videoId = item.id),
-                                    item.asSongItem().toMediaMetadata()
+                                    item.asSongItem().toMediaMetadata(),
                                 )
                             )
                             is PodcastItem -> navController.navigate("podcast/${item.id}")
@@ -251,8 +212,7 @@ fun OnlineSearchResult(
 
     LazyColumn(
         state = lazyListState,
-        contentPadding =
-        LocalPlayerAwareWindowInsets.current
+        contentPadding = LocalPlayerAwareWindowInsets.current
             .add(WindowInsets(top = SearchFilterHeight))
             .add(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal))
             .asPaddingValues(),
@@ -309,6 +269,11 @@ fun OnlineSearchResult(
                 }
             }
         } else {
+            if (searchFilter == FILTER_SONG && itemsPage?.items?.isNotEmpty() == true) {
+                item(key = "youtube_music_header") {
+                    NavigationTitle("YouTube Music")
+                }
+            }
             items(
                 items = itemsPage?.items.orEmpty().distinctBy { it.id },
                 key = { "filtered_${it.id}" },
@@ -347,8 +312,7 @@ fun OnlineSearchResult(
     }
 
     ChipsRow(
-        chips =
-        listOf(
+        chips = listOf(
             null to stringResource(R.string.filter_all),
             FILTER_SONG to stringResource(R.string.filter_songs),
             FILTER_VIDEO to stringResource(R.string.filter_videos),
@@ -366,18 +330,67 @@ fun OnlineSearchResult(
                 lazyListState.animateScrollToItem(0)
             }
         },
-        modifier =
-        Modifier
+        modifier = Modifier
             .background(MaterialTheme.colorScheme.surface)
             .windowInsetsPadding(
                 WindowInsets.systemBars
                     .only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top)
-                    .add(WindowInsets(top = AppBarHeight))
+                    .add(WindowInsets(top = AppBarHeight)),
             )
-            .fillMaxWidth()
+            .fillMaxWidth(),
     )
 }
 
+@Composable
+private fun YouTubeSearchTrailing(
+    songId: String,
+    onMenuClick: () -> Unit,
+) {
+    val database = LocalDatabase.current
+    val format by produceState<FormatEntity?>(initialValue = null, songId) {
+        value = database.format(songId).firstOrNull()
+    }
+
+    val bitrateLabel = when {
+        format?.playbackUrl?.startsWith("saavn://") == true || (format?.itag ?: 0) < 0 -> "Adaptive"
+        (format?.bitrate ?: 0) > 0 -> "${(format?.bitrate ?: 0) / 1000} kbps"
+        else -> "Adaptive"
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        SearchMetaPill(text = "YT Music", accent = true)
+        Spacer(Modifier.width(4.dp))
+        SearchMetaPill(text = bitrateLabel)
+        Spacer(Modifier.width(8.dp))
+        IconButton(onClick = onMenuClick) {
+            Icon(
+                painter = painterResource(R.drawable.more_vert),
+                contentDescription = null,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchMetaPill(
+    text: String,
+    accent: Boolean = false,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelSmall,
+        color = if (accent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(RoundedCornerShape(999.dp))
+            .background(
+                if (accent) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.9f),
+            )
+            .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
+}
 
 @Composable
 private fun SaavnSearchRow(
@@ -401,12 +414,11 @@ private fun SaavnSearchRow(
             val artistText = song.artists.joinToString(", ").ifBlank { "Unknown artist" }
             val details = listOfNotNull(
                 artistText,
-                "JioSaavn",
                 song.duration?.takeIf { it > 0 }?.let { seconds ->
                     val min = seconds / 60
                     val sec = seconds % 60
                     "%d:%02d".format(min, sec)
-                }
+                },
             ).joinToString(" • ")
             Text(
                 text = details,
@@ -431,11 +443,9 @@ private fun SaavnSearchRow(
         },
         trailingContent = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = "320 kbps",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                SearchMetaPill(text = "Saavn", accent = true)
+                Spacer(Modifier.width(4.dp))
+                SearchMetaPill(text = "320 kbps")
                 Spacer(Modifier.width(8.dp))
                 if (onMenuClick != null) {
                     IconButton(onClick = onMenuClick) {
