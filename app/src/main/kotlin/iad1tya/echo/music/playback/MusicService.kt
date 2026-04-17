@@ -6,6 +6,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import android.Manifest
 import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -527,6 +528,16 @@ class MusicService :
 
     private var widgetProgressJob: Job? = null
 
+    // CHATGPT_BATTERY_OPTIMIZATION_PATCH_START
+    private fun hasAnyPinnedWidgets(): Boolean {
+        val appWidgetManager = AppWidgetManager.getInstance(this)
+        return appWidgetManager.getAppWidgetIds(ComponentName(this, MusicWidgetProvider::class.java)).isNotEmpty() ||
+            appWidgetManager.getAppWidgetIds(ComponentName(this, WideMusicWidgetProvider::class.java)).isNotEmpty() ||
+            appWidgetManager.getAppWidgetIds(ComponentName(this, ScalableMusicWidgetProvider::class.java)).isNotEmpty() ||
+            appWidgetManager.getAppWidgetIds(ComponentName(this, AdaptiveMusicWidgetProvider::class.java)).isNotEmpty()
+    }
+    // CHATGPT_BATTERY_OPTIMIZATION_PATCH_END
+
     // Last.fm scrobbling
     private var scrobbleManager: ScrobbleManager? = null
 
@@ -901,9 +912,10 @@ class MusicService :
         }
 
         // SponsorBlock Skipper
+        // CHATGPT_BATTERY_OPTIMIZATION_PATCH: relax SponsorBlock polling to reduce constant wakeups.
         scope.launch {
             while (isActive) {
-                delay(if (player.isPlaying && currentSkipSegments.value.isNotEmpty()) 1000L else 2500L)
+                delay(if (player.isPlaying && currentSkipSegments.value.isNotEmpty()) 3000L else 8000L)
                 if (player.isPlaying && currentSkipSegments.value.isNotEmpty()) {
                     val position = player.currentPosition / 1000f
                     val segment = currentSkipSegments.value.firstOrNull { position >= it.start && position < it.end }
@@ -1108,20 +1120,11 @@ class MusicService :
                 }
             }
 
+        // CHATGPT_BATTERY_OPTIMIZATION_PATCH: keep periodic persistence, but avoid frequent disk writes during playback.
         scope.launch {
             while (isActive) {
-                delay(30.seconds)
+                delay(if (player.isPlaying) 120.seconds else 180.seconds)
                 if (dataStore.get(PersistentQueueKey, true)) {
-                    saveQueueToDisk()
-                }
-            }
-        }
-
-        // Save queue more frequently when playing to ensure state is preserved
-        scope.launch {
-            while (isActive) {
-                delay(10.seconds)
-                if (dataStore.get(PersistentQueueKey, true) && player.isPlaying) {
                     saveQueueToDisk()
                 }
             }
@@ -1130,6 +1133,10 @@ class MusicService :
         widgetProgressJob?.cancel()
         widgetProgressJob = scope.launch {
             while (isActive) {
+                if (!hasAnyPinnedWidgets()) {
+                    delay(30000L)
+                    continue
+                }
                 if (::player.isInitialized && player.currentMediaItem != null) {
                     val metadata = player.currentMetadata
                     val safeDuration = when {
@@ -1163,7 +1170,7 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                 }
-                delay(if (player.isPlaying) 2000L else 5000L)
+                delay(if (player.isPlaying) 8000L else 20000L)
             }
         }
         } catch (e: Exception) {
@@ -3508,6 +3515,7 @@ class MusicService :
         }
         mediaSession.release()
         player.release()
+        scope.cancel()
         
         super.onDestroy()
     }
