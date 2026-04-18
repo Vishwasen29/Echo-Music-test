@@ -45,9 +45,12 @@ import iad1tya.echo.music.R
 import iad1tya.echo.music.extensions.metadata
 import iad1tya.echo.music.extensions.toMediaItem
 import iad1tya.echo.music.models.MediaMetadata
+import iad1tya.echo.music.models.toMediaMetadata
 import iad1tya.echo.music.ui.component.NewAction
 import iad1tya.echo.music.ui.component.NewActionGrid
 import iad1tya.echo.music.utils.SaavnAudioResolver
+import com.echo.innertube.YouTube
+import com.echo.innertube.models.SongItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -158,15 +161,7 @@ fun SaavnSongMenu(
                             isResolvingPlaylistMatch = true
                             coroutineScope.launch {
                                 val match = withContext(Dispatchers.IO) {
-                                    val query = listOf(song.title, song.artists.firstOrNull().orEmpty())
-                                        .filter { it.isNotBlank() }
-                                        .joinToString(" ")
-                                        .trim()
-                                    playerConnection.service.searchSaavnForYoutube(query, limit = 5)
-                                        .getOrNull()
-                                        ?.maxByOrNull { candidate ->
-                                            saavnPlaylistMatchScore(song, candidate)
-                                        }
+                                    matchYoutubeSongForSaavn(song)
                                 }
                                 isResolvingPlaylistMatch = false
                                 if (match == null) {
@@ -176,8 +171,8 @@ fun SaavnSongMenu(
                                         Toast.LENGTH_SHORT,
                                     ).show()
                                 } else {
-                                    matchedPlaylistSongId = match.matchedYoutubeId
-                                    matchedPlaylistMetadata = match.mediaItem.metadata
+                                    matchedPlaylistSongId = match.id
+                                    matchedPlaylistMetadata = match.toMediaMetadata()
                                     showChoosePlaylistDialog = true
                                 }
                             }
@@ -262,9 +257,28 @@ private fun saavnSearchResultToMetadata(song: SaavnAudioResolver.SaavnSearchResu
     )
 }
 
-private fun saavnPlaylistMatchScore(
+private suspend fun matchYoutubeSongForSaavn(
     source: SaavnAudioResolver.SaavnSearchResult,
-    candidate: iad1tya.echo.music.playback.MusicService.SaavnSearchMatch,
+): SongItem? {
+    val query = listOf(source.title, source.artists.firstOrNull().orEmpty())
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+        .trim()
+    if (query.isBlank()) return null
+
+    return YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
+        .getOrNull()
+        ?.items
+        ?.filterIsInstance<SongItem>()
+        ?.map { candidate -> candidate to youtubeSongMatchScore(source, candidate) }
+        ?.filter { (_, score) -> score >= 85 }
+        ?.maxByOrNull { it.second }
+        ?.first
+}
+
+private fun youtubeSongMatchScore(
+    source: SaavnAudioResolver.SaavnSearchResult,
+    candidate: SongItem,
 ): Int {
     fun normalize(value: String): String = value
         .lowercase()
@@ -273,17 +287,50 @@ private fun saavnPlaylistMatchScore(
         .trim()
 
     val sourceTitle = normalize(source.title)
-    val candidateSourceTitle = normalize(candidate.sourceTitle)
-    val sourcePrimaryArtist = normalize(source.artists.firstOrNull().orEmpty())
-    val candidateArtists = normalize(candidate.sourceArtistsLine)
+    val candidateTitle = normalize(candidate.title)
+    val sourceArtists = source.artists.map(::normalize).filter { it.isNotBlank() }
+    val candidateArtists = candidate.artists.map { normalize(it.name) }.filter { it.isNotBlank() }
+
+    val variantTerms = listOf(
+        "remix", "mix", "version", "karaoke", "instrumental", "acoustic",
+        "lofi", "slowed", "reverb", "live", "cover"
+    )
+    val sourceWantsVariant = variantTerms.any { it in sourceTitle }
 
     var score = 0
-    if (sourceTitle == candidateSourceTitle) score += 120
-    else if (sourceTitle in candidateSourceTitle || candidateSourceTitle in sourceTitle) score += 60
+    if (!sourceWantsVariant && variantTerms.any { it in candidateTitle }) {
+        score -= 120
+    }
 
-    if (sourcePrimaryArtist.isNotBlank()) {
-        if (candidateArtists.contains(sourcePrimaryArtist)) score += 80
-        else score -= 40
+    when {
+        sourceTitle == candidateTitle -> score += 140
+        sourceTitle.isNotBlank() && (candidateTitle.contains(sourceTitle) || sourceTitle.contains(candidateTitle)) -> score += 85
+        else -> {
+            val sourceTokens = sourceTitle.split(" ").filter { it.isNotBlank() }.toSet()
+            val candidateTokens = candidateTitle.split(" ").filter { it.isNotBlank() }.toSet()
+            score += sourceTokens.intersect(candidateTokens).size * 14
+        }
+    }
+
+    if (sourceArtists.isNotEmpty()) {
+        score += when {
+            candidateArtists.any { it in sourceArtists } -> 100
+            candidateArtists.any { cand -> sourceArtists.any { src -> cand.contains(src) || src.contains(cand) } } -> 70
+            else -> -35
+        }
+    }
+
+    val sourceDuration = source.duration ?: 0
+    val candidateDuration = candidate.duration ?: 0
+    if (sourceDuration > 0 && candidateDuration > 0) {
+        val diff = kotlin.math.abs(sourceDuration - candidateDuration)
+        score += when {
+            diff <= 2 -> 30
+            diff <= 5 -> 20
+            diff <= 10 -> 10
+            diff <= 20 -> 0
+            else -> -25
+        }
     }
 
     return score

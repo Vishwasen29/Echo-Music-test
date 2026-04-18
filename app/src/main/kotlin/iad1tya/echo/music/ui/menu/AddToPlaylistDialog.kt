@@ -144,13 +144,17 @@ fun AddToPlaylistDialog(
                         onClick = {
                             showDuplicateDialog = false
                             onDismiss()
+                            val idsToAdd = songIds!!.filter {
+                                !duplicates.contains(it)
+                            }
                             database.transaction {
                                 addSongToPlaylist(
                                     selectedPlaylist!!,
-                                    songIds!!.filter {
-                                        !duplicates.contains(it)
-                                    }
+                                    idsToAdd
                                 )
+                            }
+                            selectedPlaylist?.playlist?.browseId?.let { plist ->
+                                idsToAdd.forEach { YouTube.addToPlaylist(plist, it) }
                             }
                         }
                     ) {
@@ -163,6 +167,9 @@ fun AddToPlaylistDialog(
                             onDismiss()
                             database.transaction {
                                 addSongToPlaylist(selectedPlaylist!!, songIds!!)
+                            }
+                            selectedPlaylist?.playlist?.browseId?.let { plist ->
+                                songIds!!.forEach { YouTube.addToPlaylist(plist, it) }
                             }
                         }
                     ) {

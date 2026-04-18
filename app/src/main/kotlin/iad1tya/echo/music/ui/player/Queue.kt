@@ -613,7 +613,9 @@ fun Queue(
         val mutableQueueWindows = remember { mutableStateListOf<Timeline.Window>() }
         val queueLength =
             remember(queueWindows) {
-                queueWindows.sumOf { it.mediaItem.metadata!!.duration }
+                queueWindows.sumOf { window ->
+                    window.mediaItem.metadata?.duration?.takeIf { it > 0 } ?: 0
+                }
             }
 
         val coroutineScope = rememberCoroutineScope()
@@ -715,6 +717,7 @@ fun Queue(
                     items = mutableQueueWindows,
                     key = { _, item -> item.uid.hashCode() },
                 ) { index, window ->
+                    val windowMetadata = window.mediaItem.metadata ?: return@itemsIndexed
                     ReorderableItem(
                         state = reorderableState,
                         key = window.uid.hashCode(),
@@ -765,7 +768,7 @@ fun Queue(
                                 colors = CardDefaults.cardColors(
                                     containerColor = when {
                                         index == currentWindowIndex -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f)
-                                        selection && window.mediaItem.metadata!! in selectedSongs -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f)
+                                        selection && windowMetadata in selectedSongs -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.92f)
                                         else -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f)
                                     },
                                 ),
@@ -774,8 +777,8 @@ fun Queue(
                                     .animateItem(),
                             ) {
                                 MediaMetadataListItem(
-                                    mediaMetadata = window.mediaItem.metadata!!,
-                                    isSelected = selection && window.mediaItem.metadata!! in selectedSongs,
+                                    mediaMetadata = windowMetadata,
+                                    isSelected = selection && windowMetadata in selectedSongs,
                                     isActive = index == currentWindowIndex,
                                     isPlaying = isPlaying,
                                     trailingContent = {
@@ -783,7 +786,7 @@ fun Queue(
                                             onClick = {
                                                 menuState.show {
                                                     PlayerMenu(
-                                                        mediaMetadata = window.mediaItem.metadata!!,
+                                                        mediaMetadata = windowMetadata,
                                                         navController = navController,
                                                         playerBottomSheetState = playerBottomSheetState,
                                                         onShowAudioOutput = onShowAudioOutput,
@@ -822,11 +825,11 @@ fun Queue(
                                         .combinedClickable(
                                             onClick = {
                                                 if (selection) {
-                                                    if (window.mediaItem.metadata!! in selectedSongs) {
-                                                        selectedSongs.remove(window.mediaItem.metadata!!)
+                                                    if (windowMetadata in selectedSongs) {
+                                                        selectedSongs.remove(windowMetadata)
                                                         selectedItems.remove(currentItem)
                                                     } else {
-                                                        selectedSongs.add(window.mediaItem.metadata!!)
+                                                        selectedSongs.add(windowMetadata)
                                                         selectedItems.add(currentItem)
                                                     }
                                                 } else {
@@ -846,7 +849,7 @@ fun Queue(
                                                     selection = true
                                                 }
                                                 selectedSongs.clear()
-                                                selectedSongs.add(window.mediaItem.metadata!!)
+                                                selectedSongs.add(windowMetadata)
                                             },
                                         ),
                                 )
@@ -884,6 +887,7 @@ fun Queue(
                         items = automix,
                         key = { _, it -> it.mediaId },
                     ) { index, item ->
+                        val automixMetadata = item.metadata ?: return@itemsIndexed
                         Card(
                             shape = RoundedCornerShape(24.dp),
                             colors = CardDefaults.cardColors(
@@ -894,7 +898,7 @@ fun Queue(
                                 .animateItem(),
                         ) {
                             MediaMetadataListItem(
-                                mediaMetadata = item.metadata!!,
+                                mediaMetadata = automixMetadata,
                                 trailingContent = {
                                     IconButton(
                                         onClick = {
@@ -930,7 +934,7 @@ fun Queue(
                                         onLongClick = {
                                             menuState.show {
                                                 PlayerMenu(
-                                                    mediaMetadata = item.metadata!!,
+                                                    mediaMetadata = automixMetadata,
                                                     navController = navController,
                                                     playerBottomSheetState = playerBottomSheetState,
                                                     onShowAudioOutput = onShowAudioOutput,
@@ -1075,12 +1079,13 @@ fun Queue(
                                 selectedSongs.clear()
                                 selectedItems.clear()
                             } else {
-                                queueWindows
-                                    .filter { it.mediaItem.metadata!! !in selectedSongs }
-                                    .forEach {
-                                        selectedSongs.add(it.mediaItem.metadata!!)
-                                        selectedItems.add(it)
+                                queueWindows.forEach { window ->
+                                    val metadata = window.mediaItem.metadata ?: return@forEach
+                                    if (metadata !in selectedSongs) {
+                                        selectedSongs.add(metadata)
+                                        selectedItems.add(window)
                                     }
+                                }
                             }
                         },
                     ) {
