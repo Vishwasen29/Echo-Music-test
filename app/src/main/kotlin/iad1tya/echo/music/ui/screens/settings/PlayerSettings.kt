@@ -287,11 +287,11 @@ fun PlayerSettings(
     // CHATGPT_QUEUE_PREFETCH_PATCH
     val (queueAudioPrefetchEnabled, onQueueAudioPrefetchEnabledChange) = rememberPreference(
         QueueAudioPrefetchEnabledKey,
-        defaultValue = true
+        defaultValue = false
     )
     val (queueAudioPrefetchCount, onQueueAudioPrefetchCountChange) = rememberPreference(
         QueueAudioPrefetchCountKey,
-        defaultValue = 10
+        defaultValue = 1
     )
 
     Column(

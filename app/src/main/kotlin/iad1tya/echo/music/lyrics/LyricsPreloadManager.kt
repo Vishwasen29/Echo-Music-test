@@ -28,37 +28,9 @@ class LyricsPreloadManager(
     private var preloadJob: Job? = null
 
     fun onSongChanged(currentIndex: Int, queue: List<MediaMetadata>) {
+        // CHATGPT_REFINED_LYRICS_PRELOAD_DISABLED
         preloadJob?.cancel()
-
-        scope.launch {
-            try {
-                val preferences = context.dataStore.data.first()
-                val isEnabled = preferences[PreloadQueueLyricsEnabledKey] ?: true
-                if (!isEnabled) {
-                    Log.d(TAG, "Queue lyrics preload is disabled")
-                    return@launch
-                }
-
-                val isNetworkAvailable = try {
-                    networkConnectivity.isCurrentlyConnected()
-                } catch (_: Exception) {
-                    true
-                }
-
-                if (!isNetworkAvailable) {
-                    Log.w(TAG, "Network unavailable, skipping lyrics preload")
-                    return@launch
-                }
-
-                val preloadCount = preferences[QueueLyricsPreloadCountKey] ?: DEFAULT_PRELOAD_COUNT
-                val nextSongs = getNextSongs(queue, currentIndex, preloadCount)
-                if (nextSongs.isEmpty()) return@launch
-
-                preloadLyrics(nextSongs)
-            } catch (e: Exception) {
-                reportException(e)
-            }
-        }
+        return
     }
 
     private fun getNextSongs(queue: List<MediaMetadata>, currentIndex: Int, count: Int): List<MediaMetadata> {
@@ -104,6 +76,6 @@ class LyricsPreloadManager(
 
     private companion object {
         private const val TAG = "LyricsPreloadManager"
-        private const val DEFAULT_PRELOAD_COUNT = 3
+        private const val DEFAULT_PRELOAD_COUNT = 1
     }
 }

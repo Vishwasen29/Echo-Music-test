@@ -32,8 +32,9 @@ class QueueAudioPrefetchManager(
 
         prefetchJob = scope.launch {
             val preferences = context.dataStore.data.first()
-            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: true
+            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: false
             if (!enabled) return@launch
+            if (!player.isPlaying) return@launch
 
             val prefetchCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
                 .coerceIn(1, MAX_PREFETCH_COUNT)
@@ -115,8 +116,5 @@ class QueueAudioPrefetchManager(
     private companion object {
         private const val TAG = "QueueAudioPrefetch"
         private const val DEFAULT_PREFETCH_COUNT = 10
-        private const val MAX_PREFETCH_COUNT = 10
-        private const val PREFETCH_BYTES = 8L * 1024L * 1024L
-        private const val PREFETCH_DELAY_MS = 300L
-    }
-}
+        private const val MAX_PREFETCH_COUNT = 2
+        private const val PREFETCH_BYTES = 1L * 1024L * 1024L

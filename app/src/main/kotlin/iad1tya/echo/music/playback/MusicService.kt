@@ -1123,7 +1123,7 @@ class MusicService :
         // CHATGPT_BATTERY_OPTIMIZATION_PATCH: keep periodic persistence, but avoid frequent disk writes during playback.
         scope.launch {
             while (isActive) {
-                delay(if (player.isPlaying) 120.seconds else 180.seconds)
+                delay(if (player.isPlaying) 180.seconds else 300.seconds)
                 if (dataStore.get(PersistentQueueKey, true)) {
                     saveQueueToDisk()
                 }
@@ -1134,7 +1134,7 @@ class MusicService :
         widgetProgressJob = scope.launch {
             while (isActive) {
                 if (!hasAnyPinnedWidgets()) {
-                    delay(30000L)
+                    delay(60000L)
                     continue
                 }
                 if (::player.isInitialized && player.currentMediaItem != null) {
@@ -1170,7 +1170,7 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                 }
-                delay(if (player.isPlaying) 8000L else 20000L)
+                delay(if (player.isPlaying) 15000L else 60000L)
             }
         }
         } catch (e: Exception) {
@@ -1542,18 +1542,10 @@ class MusicService :
     }
 
     private suspend fun refreshPlayerRecommendations(mediaId: String) {
-        val youtube = fetchYouTubeRecommendations(mediaId)
-        val saavn = fetchSaavnRecommendations(mediaId)
-
-        val merged = linkedMapOf<String, PlayerRecommendation>()
-        (youtube + saavn).forEach { recommendation ->
-            merged.putIfAbsent(
-                normalizeRecommendationKey(recommendation.title, recommendation.artistsLine),
-                recommendation,
-            )
-        }
-        playerRecommendations.value = merged.values.take(10).toList()
+        // CHATGPT_REFINED_RECOMMENDATIONS_DISABLED
+        playerRecommendations.value = emptyList()
     }
+
 
     suspend fun addRecommendationToYoutubePlaylist(
         playlistId: String,
@@ -2385,18 +2377,8 @@ class MusicService :
         
         // Update widget
         updateWidget()
-        mediaItem?.mediaId?.let { recommendationMediaId ->
-            scope.launch(SilentHandler) {
-                refreshPlayerRecommendations(recommendationMediaId)
-            }
-        }
-
-        val queue = player.mediaItems.mapNotNull { it.metadata }
-        if (queue.isNotEmpty()) {
-            lyricsPreloadManager?.onSongChanged(player.currentMediaItemIndex, queue)
-        }
-
-        // CHATGPT_QUEUE_PREFETCH_PATCH
+        // CHATGPT_REFINED_RECOMMENDATIONS_AND_LYRICS_DISABLED
+        playerRecommendations.value = emptyList()
         queueAudioPrefetchManager?.onQueuePositionChanged(player)
 
         // Auto load more songs
@@ -3747,6 +3729,7 @@ class MusicService :
         currentTrackCounterCompact()?.let { "$base • $it" } ?: base
 
     private fun updateWidget() {
+        if (!hasAnyPinnedWidgets()) return
         val metadata = player.currentMetadata
         val safeDuration = when {
             player.duration > 0L && player.duration != C.TIME_UNSET -> player.duration
