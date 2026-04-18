@@ -144,18 +144,20 @@ fun AddToPlaylistDialog(
                         onClick = {
                             showDuplicateDialog = false
                             onDismiss()
-                            val idsToAdd = songIds!!.filter {
-                                !duplicates.contains(it)
-                            }
-                            database.transaction {
-                                addSongToPlaylist(
-                                    selectedPlaylist!!,
-                                    idsToAdd
-                                )
-                            }
-                            selectedPlaylist?.playlist?.browseId?.let { plist ->
-                                idsToAdd.forEach { YouTube.addToPlaylist(plist, it) }
-                            }
+coroutineScope.launch(Dispatchers.IO) {
+    val idsToAdd = songIds!!.filter {
+        !duplicates.contains(it)
+    }
+    database.transaction {
+        addSongToPlaylist(
+            selectedPlaylist!!,
+            idsToAdd
+        )
+    }
+    selectedPlaylist?.playlist?.browseId?.let { plist ->
+        idsToAdd.forEach { YouTube.addToPlaylist(plist, it) }
+    }
+}
                         }
                     ) {
                         Text(stringResource(R.string.skip_duplicates))
@@ -165,12 +167,14 @@ fun AddToPlaylistDialog(
                         onClick = {
                             showDuplicateDialog = false
                             onDismiss()
-                            database.transaction {
-                                addSongToPlaylist(selectedPlaylist!!, songIds!!)
-                            }
-                            selectedPlaylist?.playlist?.browseId?.let { plist ->
-                                songIds!!.forEach { YouTube.addToPlaylist(plist, it) }
-                            }
+coroutineScope.launch(Dispatchers.IO) {
+    database.transaction {
+        addSongToPlaylist(selectedPlaylist!!, songIds!!)
+    }
+    selectedPlaylist?.playlist?.browseId?.let { plist ->
+        songIds!!.forEach { YouTube.addToPlaylist(plist, it) }
+    }
+}
                         }
                     ) {
                         Text(stringResource(R.string.add_anyway))
