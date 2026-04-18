@@ -3,9 +3,9 @@ package iad1tya.echo.music.playback
 import android.content.Context
 import android.util.Log
 import androidx.media3.common.Player
-import iad1tya.echo.music.extensions.metadata
 import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
 import iad1tya.echo.music.constants.QueueAudioPrefetchEnabledKey
+import iad1tya.echo.music.extensions.metadata
 import iad1tya.echo.music.utils.NetworkConnectivityObserver
 import iad1tya.echo.music.utils.dataStore
 import kotlinx.coroutines.CoroutineScope
@@ -115,6 +115,9 @@ class QueueAudioPrefetchManager(
 
     private companion object {
         private const val TAG = "QueueAudioPrefetch"
-        private const val DEFAULT_PREFETCH_COUNT = 10
+        private const val DEFAULT_PREFETCH_COUNT = 1
         private const val MAX_PREFETCH_COUNT = 2
-        private const val PREFETCH_BYTES = 1L * 1024L * 1024L
+        private const val PREFETCH_BYTES = 2L * 1024L * 1024L
+        private const val PREFETCH_DELAY_MS = 1200L
+    }
+}

@@ -1542,7 +1542,6 @@ class MusicService :
     }
 
     private suspend fun refreshPlayerRecommendations(mediaId: String) {
-        // CHATGPT_REFINED_RECOMMENDATIONS_DISABLED
         playerRecommendations.value = emptyList()
     }
 

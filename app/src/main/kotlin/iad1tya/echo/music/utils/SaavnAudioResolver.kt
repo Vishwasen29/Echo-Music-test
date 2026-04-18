@@ -136,37 +136,34 @@ object SaavnAudioResolver {
                         .thenByDescending { qualityScore(it.first.downloadLinks) }
                 )
 
-            ranked.asSequence()
-                .filter { (candidate, candidateScore) ->
-                    isStrongAccept(candidate, candidateScore, mediaMetadata)
-                }
-                .take(6)
-                .mapNotNull { (candidate, _) ->
-                    val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
-                        candidate
-                    } else {
-                        fetchSong(candidate.id) ?: candidate
-                    }
+            for ((candidate, candidateScore) in ranked) {
+                if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
 
-                    val chosenLink = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: return@mapNotNull null
-                    ResolvedStream(
-                        url = chosenLink.url,
-                        bitrate = chosenLink.bitrate.takeIf { it > 0 },
-                        mimeType = inferMimeType(chosenLink.url),
-                        sampleRate = 44100,
-                        provider = "Saavn",
-                        songId = hydrated.id,
-                        matchedTitle = hydrated.title,
-                        matchedArtists = hydrated.artists,
-                        thumbnailUrl = hydrated.thumbnailUrl,
-                        albumTitle = hydrated.albumName,
-                        durationSeconds = hydrated.duration,
-                    )
+                val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
+                    candidate
+                } else {
+                    fetchSong(candidate.id) ?: candidate
                 }
-                .firstOrNull()
+
+                val chosenLink = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: continue
+                return@runCatching ResolvedStream(
+                    url = chosenLink.url,
+                    bitrate = chosenLink.bitrate.takeIf { it > 0 },
+                    mimeType = inferMimeType(chosenLink.url),
+                    sampleRate = 44100,
+                    provider = "Saavn",
+                    songId = hydrated.id,
+                    matchedTitle = hydrated.title,
+                    matchedArtists = hydrated.artists,
+                    thumbnailUrl = hydrated.thumbnailUrl,
+                    albumTitle = hydrated.albumName,
+                    durationSeconds = hydrated.duration,
+                )
+            }
+
+            null
         }
     }
-
 
     suspend fun resolveById(
         sourceSongId: String,
@@ -242,7 +239,7 @@ object SaavnAudioResolver {
 
             search(query)
                 .distinctBy { it.id }
-                .filterNot { candidate -> hasUnexpectedPenaltyTerms(candidate, query) }
+                .filter { candidate -> isAcceptableSearchCandidate(candidate, query) }
                 .sortedWith(
                     compareByDescending<Candidate> { saavnSearchScore(it, query) }
                         .thenByDescending { qualityScore(it.downloadLinks) }
@@ -261,7 +258,6 @@ object SaavnAudioResolver {
                 }
         }
     }
-
 
     private fun saavnSearchScore(candidate: Candidate, query: String): Int {
         val normalizedQuery = normalizeTitleCore(query)
@@ -283,13 +279,46 @@ object SaavnAudioResolver {
         return score
     }
 
+    private fun isAcceptableSearchCandidate(candidate: Candidate, query: String): Boolean {
+        val normalizedQuery = normalizeTitleCore(query)
+        if (normalizedQuery.isBlank()) return true
+        val queryTerms = extractPenaltyTerms(normalizedQuery)
+        val candidateTerms = extractPenaltyTerms(
+            normalizeTitleCore(candidate.title) + " " +
+                normalizeTitleCore(candidate.albumName.orEmpty()) + " " +
+                candidate.artists.joinToString(" ") { normalizeArtist(it) }
+        )
+        val disallowedExtras = candidateTerms - queryTerms
+        if (disallowedExtras.any { it in setOf(
+            "cover",
+            "karaoke",
+            "tribute",
+            "instrumental",
+            "acoustic",
+            "live",
+            "remix",
+            "slowed",
+            "reverb",
+            "sped up",
+            "sped",
+            "dj",
+            "mix",
+            "version",
+        ) }) return false
+
+        val normalizedTitle = normalizeTitleCore(candidate.title)
+        return normalizedTitle == normalizedQuery ||
+            normalizedTitle.contains(normalizedQuery) ||
+            normalizedQuery.contains(normalizedTitle) ||
+            tokenSimilarity(normalizedTitle, normalizedQuery) >= 26
+    }
+
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
         val title = mediaMetadata.title.trim()
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
         val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
         val album = mediaMetadata.album?.title?.trim().orEmpty()
         val strippedTitle = normalizeTitleCore(title)
-        val hasArtist = primaryArtist.isNotBlank()
 
         val strictQueries = linkedSetOf<String>()
         strictQueries += listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
@@ -297,15 +326,7 @@ object SaavnAudioResolver {
         strictQueries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
         strictQueries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
 
-        val fallbackQueries = linkedSetOf<String>()
-        if (!hasArtist) {
-            fallbackQueries += title
-            fallbackQueries += strippedTitle
-        }
-
-        return (strictQueries + fallbackQueries)
-            .filter { it.isNotBlank() }
-            .distinct()
+        return strictQueries.filter { it.isNotBlank() }.distinct()
     }
 
     private fun search(query: String): List<Candidate> {
@@ -522,12 +543,11 @@ object SaavnAudioResolver {
                     if (name.isNotBlank()) artists += name
                 }
             }
-
             if (artists.isEmpty()) {
-                listOf("featured", "all").forEach { key ->
-                    val array = structured.optJSONArray(key) ?: return@forEach
-                    for (index in 0 until array.length()) {
-                        val artist = array.optJSONObject(index) ?: continue
+                val featured = structured.optJSONArray("featured")
+                if (featured != null) {
+                    for (index in 0 until featured.length()) {
+                        val artist = featured.optJSONObject(index) ?: continue
                         val name = artist.optString("name").trim()
                         if (name.isNotBlank()) artists += name
                     }
@@ -535,17 +555,9 @@ object SaavnAudioResolver {
             }
         }
 
-        val primaryArtists = json.optString("primaryArtists").trim()
-        if (primaryArtists.isNotBlank()) {
-            primaryArtists
-                .split(',', '&')
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-                .forEach { artists += it }
-        }
-
         if (artists.isEmpty()) {
             listOf(
+                json.optString("primaryArtists"),
                 json.optString("singers"),
                 json.optString("artists").takeIf { json.opt("artists") is String } ?: "",
             ).forEach { raw ->
@@ -599,25 +611,47 @@ object SaavnAudioResolver {
 
         val candidatePrimaryArtist = candidate.artists.firstOrNull()?.let(::normalizeArtist).orEmpty()
         if (candidatePrimaryArtist.isBlank()) return false
-        return candidatePrimaryArtist == requestedPrimaryArtist || artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)
+        return artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)
+    }
+
+    private fun containsUnexpectedVariant(candidate: Candidate, requestedTitle: String): Boolean {
+        val requestedTerms = extractPenaltyTerms(requestedTitle)
+        val candidateTerms = extractPenaltyTerms(
+            normalizeTitleCore(candidate.title) + " " +
+                normalizeTitleCore(candidate.albumName.orEmpty()) + " " +
+                candidate.artists.joinToString(" ") { normalizeArtist(it) }
+        )
+        return (candidateTerms - requestedTerms).any { it in setOf(
+            "cover",
+            "karaoke",
+            "tribute",
+            "instrumental",
+            "acoustic",
+            "live",
+            "remix",
+            "slowed",
+            "reverb",
+            "sped up",
+            "sped",
+            "dj",
+            "mix",
+            "version",
+        ) }
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
         val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
-        val requestedTitleRaw = requested.title.trim()
-        val requestedTitle = normalizeTitleCore(requestedTitleRaw)
-        val candidateTitleRaw = candidate.title.trim()
-        val candidateTitle = normalizeTitleCore(candidateTitleRaw)
+        val requestedTitle = normalizeTitleCore(requested.title)
+        val candidateTitle = normalizeTitleCore(candidate.title)
         val titleStrong = candidateTitle == requestedTitle ||
-            candidateTitleRaw.equals(requestedTitleRaw, ignoreCase = true) ||
-            tokenSimilarity(candidateTitle, requestedTitle) >= 42 ||
-            (requestedTitle.length >= 5 && candidateTitle.contains(requestedTitle)) ||
-            (candidateTitle.length >= 5 && requestedTitle.contains(candidateTitle))
+            candidateTitle.contains(requestedTitle) ||
+            requestedTitle.contains(candidateTitle) ||
+            tokenSimilarity(candidateTitle, requestedTitle) >= 38
         val durationClose = requested.duration <= 0 ||
             candidate.duration == null ||
-            kotlin.math.abs(candidate.duration - requested.duration) <= 8
+            kotlin.math.abs(candidate.duration - requested.duration) <= 10
 
-        if (hasUnexpectedPenaltyTerms(candidate, requested.title)) return false
+        if (containsUnexpectedVariant(candidate, requestedTitle)) return false
 
         return if (requestedPrimaryArtist.isBlank()) {
             score >= 140 && titleStrong && durationClose
@@ -733,17 +767,17 @@ object SaavnAudioResolver {
         )
         val extraTerms = candidateTerms - requestedPenaltyTerms
         var score = 0
-        if ("cover" in extraTerms) score -= 180
-        if ("karaoke" in extraTerms) score -= 220
-        if ("tribute" in extraTerms) score -= 140
-        if ("instrumental" in extraTerms) score -= 180
-        if ("acoustic" in extraTerms) score -= 90
-        if ("live" in extraTerms) score -= 85
-        if ("remix" in extraTerms) score -= 120
-        if ("slowed" in extraTerms || "reverb" in extraTerms) score -= 140
-        if ("dj" in extraTerms || "mix" in extraTerms) score -= 95
-        if ("version" in extraTerms) score -= 55
-        if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 170
+        if ("cover" in extraTerms) score -= 140
+        if ("karaoke" in extraTerms) score -= 160
+        if ("tribute" in extraTerms) score -= 120
+        if ("instrumental" in extraTerms) score -= 170
+        if ("acoustic" in extraTerms) score -= 150
+        if ("live" in extraTerms) score -= 135
+        if ("remix" in extraTerms) score -= 170
+        if ("version" in extraTerms) score -= 60
+        if ("slowed" in extraTerms || "reverb" in extraTerms) score -= 130
+        if ("dj" in extraTerms || "mix" in extraTerms) score -= 110
+        if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 100
         return score
     }
 
