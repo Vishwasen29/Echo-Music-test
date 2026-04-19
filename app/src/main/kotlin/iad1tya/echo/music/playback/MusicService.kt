@@ -2863,9 +2863,7 @@ class MusicService :
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
-
-        retryJob?.cancel()
+        val alreadyEscalated = retryJob?.cancel()
         retryJob = scope.launch {
             if (alreadyEscalated) {
                 Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
@@ -2886,9 +2884,7 @@ class MusicService :
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
-
-        songUrlCache.remove(mediaId)
+        val alreadyEscalated = songUrlCache.remove(mediaId)
         try {
             YTPlayerUtils.forceRefreshForVideo(mediaId)
         } catch (e: Exception) {
