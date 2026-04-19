@@ -2863,14 +2863,9 @@ class MusicService :
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = retryJob?.cancel()
-        retryJob = scope.launch {
-            if (alreadyEscalated) {
-                Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
-                handleFinalFailure()
-                return@launch
-            }
 
+        retryJob?.cancel()
+        retryJob = scope.launch {
             performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS * 2)
 
@@ -2878,9 +2873,10 @@ class MusicService :
             val currentIndex = player.currentMediaItemIndex
             player.seekTo(currentIndex, currentPosition)
             player.prepare()
-            Log.d("MusicService", "Retrying playback for $mediaId after page reload error with background video fallback enabled")
+            Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
         }
     }
+
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
@@ -2903,27 +2899,6 @@ class MusicService :
             player.play()
             Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
         }
-    } catch (e: Exception) {
-            Log.e("MusicService", "Failed to clear decryption caches", e)
-        }
-
-        retryJob?.cancel()
-        retryJob = scope.launch {
-            if (alreadyEscalated) {
-                Log.d("MusicService", "Repeated 403 for $mediaId with background video fallback already enabled; stopping retry storm")
-                handleFinalFailure()
-                return@launch
-            }
-
-            delay(RETRY_DELAY_MS)
-
-            val currentPosition = player.currentPosition
-            val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, currentPosition)
-            player.prepare()
-            player.play()
-            Log.d("MusicService", "Retrying playback for $mediaId after 403 error with background video fallback enabled")
-        }
     }
 
     private fun handleGenericIOError(mediaId: String?) {
@@ -2932,7 +2907,7 @@ class MusicService :
 
         retryJob?.cancel()
         retryJob = scope.launch {
-            if (mediaId != null) performAggressiveCacheClear(mediaId)
+            performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS)
 
             val currentPosition = player.currentPosition
@@ -2941,7 +2916,6 @@ class MusicService :
             player.prepare()
             Log.d("MusicService", "Retrying playback for $mediaId after generic IO error")
         }
-    }
     }
 
     private fun handleFinalFailure() {
