@@ -1,40 +1,43 @@
-name: Android Release CI Non debug
+name: Android CI Debug
 
 on:
   push:
     branches:
       - main
       - master
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-release-${{ github.workflow }}-${{ github.ref }}
+  group: android-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build ${{ matrix.name }}
+    name: Build ${{ matrix.name }} APK
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 75
+
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Universal Release
-            task: assembleUniversalRelease
-            artifact_name: echo-universal-release-apk
-            artifact_path: app/build/outputs/apk/universal/release/*.apk
-          - name: ARM64 Release
-            task: assembleArm64Release
-            artifact_name: echo-arm64-release-apk
-            artifact_path: app/build/outputs/apk/arm64/release/*.apk
+          - name: Universal Debug
+            task: assembleUniversalDebug
+            artifact_name: echo-universal-debug-apk
+            artifact_path: app/build/outputs/apk/universal/debug/*.apk
+
+          - name: ARM64 Debug
+            task: assembleArm64Debug
+            artifact_name: echo-arm64-debug-apk
+            artifact_path: app/build/outputs/apk/arm64/debug/*.apk
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -43,10 +46,10 @@ jobs:
           java-version: '21'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Install Android platform packages
         run: |
@@ -61,41 +64,21 @@ jobs:
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
           cat local.properties
 
-      - name: Decode release keystore
+      - name: Restore fixed debug keystore for CI
         env:
-          RELEASE_KEYSTORE_B64: ${{ secrets.RELEASE_KEYSTORE_B64 }}
+          DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
-          if [ -z "$RELEASE_KEYSTORE_B64" ]; then
-            echo "Missing RELEASE_KEYSTORE_B64 secret" >&2
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "Missing DEBUG_KEYSTORE_B64 secret" >&2
             exit 1
           fi
-          echo "$RELEASE_KEYSTORE_B64" | base64 -d > app/release.keystore
-          ls -l app/release.keystore
-
-      - name: Provide Firebase config for CI
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-          elif [ -f app/google-services.json ]; then
-            echo "Using committed app/google-services.json"
-          elif [ -f app/google-services.json.example ]; then
-            cp app/google-services.json.example app/google-services.json
-          elif [ -f app/google-services.json.template ]; then
-            cp app/google-services.json.template app/google-services.json
-          else
-            echo "No google-services.json or fallback template found." >&2
-            exit 1
-          fi
+          mkdir -p "$HOME/.android"
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
+          ls -l "$HOME/.android/debug.keystore"
 
       - name: Build ${{ matrix.name }}
         env:
           CI: true
-          RELEASE_STORE_FILE: app/release.keystore
-          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
-          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: ./gradlew --stacktrace --no-daemon ${{ matrix.task }}
 
       - name: Upload ${{ matrix.name }} APK
