@@ -25,6 +25,8 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import iad1tya.echo.music.utils.potoken.PoTokenGenerator
 import iad1tya.echo.music.utils.potoken.PoTokenResult
+import java.net.Inet4Address
+import java.net.InetAddress
 
 object YTPlayerUtils {
     private const val logTag = "YTPlayerUtils"
@@ -40,6 +42,11 @@ object YTPlayerUtils {
 
     private val httpClient = OkHttpClient.Builder()
         .proxy(YouTube.proxy)
+        .dns { hostname ->
+            InetAddress.getAllByName(hostname)
+                .sortedBy { if (it is Inet4Address) 0 else 1 }
+                .toList()
+        }
         .build()
     /**
      * The main client is used for metadata and initial streams.
@@ -56,8 +63,7 @@ object YTPlayerUtils {
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
         IOS,
         MOBILE,
-        WEB,
-        WEB_CREATOR
+        WEB
     )
     data class PlaybackData(
         val audioConfig: PlayerResponse.PlayerConfig.AudioConfig?,
@@ -109,11 +115,11 @@ object YTPlayerUtils {
         Timber.tag(logTag).d("Session authentication status: ${if (isLoggedIn) "Logged in" else "Not logged in"}")
 
         val preferredClient = when (preferredStreamClient) {
-            PlayerStreamClient.ANDROID_VR -> MOBILE
+            PlayerStreamClient.ANDROID_VR -> IOS
             PlayerStreamClient.WEB_REMIX -> WEB_REMIX
             PlayerStreamClient.IOS -> IOS
             PlayerStreamClient.TVHTML5 -> TVHTML5
-            PlayerStreamClient.ANDROID -> MOBILE
+            PlayerStreamClient.ANDROID -> IOS
         }
 
         // Generate PoToken for clients that require it (WEB_REMIX, TVHTML5)
@@ -293,10 +299,14 @@ object YTPlayerUtils {
                 // then continues past the valid TVHTML5 stream to eventual WEB_CREATOR failure.
                 val isPrivatelyOwned = streamPlayerResponse?.videoDetails?.musicVideoType ==
                     "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK" || isUploadedTrack || isPrivateTrack
+                val shouldTrustDirectAudioUrl =
+                    format?.isAudio == true && client in listOf(IOS, MOBILE, WEB)
 
-                if (clientIndex == streamClients.size - 1 || isPrivatelyOwned) {
+                if (clientIndex == streamClients.size - 1 || isPrivatelyOwned || shouldTrustDirectAudioUrl) {
                     if (isPrivatelyOwned) {
                         Timber.tag(logTag).d("Skipping validation for privately owned/uploaded track (client: ${client.clientName})")
+                    } else if (shouldTrustDirectAudioUrl) {
+                        Timber.tag(logTag).d("Trusting direct audio stream for client without preflight validation: ${client.clientName}")
                     } else {
                         Timber.tag(logTag).d("Using last fallback client without validation: ${client.clientName}")
                     }
@@ -409,23 +419,28 @@ object YTPlayerUtils {
                 .firstOrNull { it.startsWith("c=") }
                 ?.substringAfter('=')
             val requestBuilder = okhttp3.Request.Builder()
-                .head()
+                .get()
                 .url(url)
+                .header("Range", "bytes=0-0")
+                .header("Accept", "*/*")
                 .header("User-Agent", StreamClientUtils.resolveUserAgent(clientParam))
 
             val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
             originReferer.origin?.let { requestBuilder.addHeader("Origin", it) }
             originReferer.referer?.let { requestBuilder.addHeader("Referer", it) }
 
-            // Add authentication cookie for privately owned tracks
             YouTube.cookie?.let { cookie ->
                 requestBuilder.addHeader("Cookie", cookie)
             }
 
-            val response = httpClient.newCall(requestBuilder.build()).execute()
-            val isSuccessful = response.isSuccessful
-            Timber.tag(logTag).d("Stream URL validation result: ${if (isSuccessful) "Success" else "Failed"} (${response.code})")
-            return isSuccessful
+            httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                val code = response.code
+                val isSuccessful = code in listOf(200, 204, 206)
+                Timber.tag(logTag).d(
+                    "Stream URL validation result: ${if (isSuccessful) "Success" else "Failed"} ($code)"
+                )
+                return isSuccessful
+            }
         } catch (e: Exception) {
             Timber.tag(logTag).e(e, "Stream URL validation failed with exception")
             reportException(e)

@@ -49,6 +49,8 @@ import java.time.LocalDateTime
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
+import java.net.Inet4Address
+import java.net.InetAddress
 
 @Singleton
 class DownloadUtil
@@ -80,6 +82,11 @@ constructor(
                     OkHttpDataSource.Factory(
                         OkHttpClient.Builder()
                             .proxy(YouTube.proxy)
+                            .dns { hostname ->
+                                InetAddress.getAllByName(hostname)
+                                    .sortedBy { if (it is Inet4Address) 0 else 1 }
+                                    .toList()
+                            }
                             .addInterceptor { chain ->
                                 val request = chain.request()
                                 val clientParam = request.url.queryParameter("c")

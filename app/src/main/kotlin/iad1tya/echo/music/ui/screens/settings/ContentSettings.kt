@@ -448,7 +448,7 @@ fun ContentSettings(
             ),
             valueText = {
                 when (it) {
-                    PlayerStreamClient.ANDROID_VR -> "Android VR"
+                    PlayerStreamClient.ANDROID_VR -> "Android VR (internally audio-only iOS)"
                     PlayerStreamClient.WEB_REMIX -> "Web Remix"
                     PlayerStreamClient.IOS -> "iOS"
                     PlayerStreamClient.TVHTML5 -> "TVHTML5"

@@ -231,6 +231,8 @@ import java.io.ObjectOutputStream
 import java.time.LocalDateTime
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
+import java.net.Inet4Address
+import java.net.InetAddress
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @AndroidEntryPoint
@@ -2847,15 +2849,23 @@ class MusicService :
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
 
+        if (forcedYoutubeFallbackIds.contains(mediaId) || hasExceededRetryLimit(mediaId)) {
+            Log.d("MusicService", "Stopping retry loop for page reload error on $mediaId")
+            handleFinalFailure()
+            return
+        }
+
         retryJob?.cancel()
         retryJob = scope.launch {
-            performAggressiveCacheClear(mediaId)
-            delay(RETRY_DELAY_MS * 2) // Extra delay for page reload errors
+            songUrlCache.remove(mediaId)
+            delay(RETRY_DELAY_MS * 2)
 
-            val currentPosition = player.currentPosition
             val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, currentPosition)
+            if (currentIndex >= 0) {
+                player.seekToDefaultPosition(currentIndex)
+            }
             player.prepare()
+            player.playWhenReady = true
             Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
         }
     }
@@ -2927,6 +2937,11 @@ class MusicService :
                                 OkHttpClient
                                     .Builder()
                                     .proxy(YouTube.proxy)
+                                    .dns { hostname ->
+                                        InetAddress.getAllByName(hostname)
+                                            .sortedBy { if (it is Inet4Address) 0 else 1 }
+                                            .toList()
+                                    }
                                     .addInterceptor { chain ->
                                         val request = chain.request()
                                         val clientParam = request.url.queryParameter("c")
