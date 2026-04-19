@@ -2860,20 +2860,19 @@ class MusicService :
             Log.d("MusicService", "Retrying playback for $mediaId after 416 error (from position 0)")
         }
     }
-
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        markYoutubeHttpFailure(mediaId)
-
-        if (forcedYoutubeFallbackIds.contains(mediaId) && shouldThrottleYoutubeRecovery(mediaId)) {
-            Log.d("MusicService", "Stopping page-reload loop for $mediaId")
-            handleFinalFailure()
-            return
-        }
+        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
 
         retryJob?.cancel()
         retryJob = scope.launch {
+            if (alreadyEscalated) {
+                Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
+                handleFinalFailure()
+                return@launch
+            }
+
             performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS * 2)
 
@@ -2881,20 +2880,13 @@ class MusicService :
             val currentIndex = player.currentMediaItemIndex
             player.seekTo(currentIndex, currentPosition)
             player.prepare()
-            Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
+            Log.d("MusicService", "Retrying playback for $mediaId after page reload error with background video fallback enabled")
         }
     }
-
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        markYoutubeHttpFailure(mediaId)
-
-        if (forcedYoutubeFallbackIds.contains(mediaId) && shouldThrottleYoutubeRecovery(mediaId)) {
-            Log.d("MusicService", "Stopping repeated 403 loop for $mediaId")
-            handleFinalFailure()
-            return
-        }
+        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
 
         songUrlCache.remove(mediaId)
         try {
@@ -2905,6 +2897,12 @@ class MusicService :
 
         retryJob?.cancel()
         retryJob = scope.launch {
+            if (alreadyEscalated) {
+                Log.d("MusicService", "Repeated 403 for $mediaId with background video fallback already enabled; stopping retry storm")
+                handleFinalFailure()
+                return@launch
+            }
+
             delay(RETRY_DELAY_MS)
 
             val currentPosition = player.currentPosition
@@ -2912,7 +2910,7 @@ class MusicService :
             player.seekTo(currentIndex, currentPosition)
             player.prepare()
             player.play()
-            Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
+            Log.d("MusicService", "Retrying playback for $mediaId after 403 error with background video fallback enabled")
         }
     }
 
@@ -2969,9 +2967,18 @@ class MusicService :
                                         val clientParam = request.url.queryParameter("c")
                                         val ua = StreamClientUtils.resolveUserAgent(clientParam)
                                         val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
+                                        val host = request.url.host.lowercase()
+                                        val isYoutubeMediaHost = host.contains("googlevideo.com") || host.contains("youtube.com") || host.contains("ytimg.com")
                                         val builder = request.newBuilder().header("User-Agent", ua)
                                         originReferer.origin?.let { builder.header("Origin", it) }
                                         originReferer.referer?.let { builder.header("Referer", it) }
+                                        if (isYoutubeMediaHost) {
+                                            builder.header("Accept-Encoding", "identity")
+                                            if (request.header("Range").isNullOrBlank()) {
+                                                builder.header("Range", "bytes=0-")
+                                            }
+                                            YouTube.cookie?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
+                                        }
                                         chain.proceed(builder.build())
                                     }
                                     .connectTimeout(5, TimeUnit.SECONDS)

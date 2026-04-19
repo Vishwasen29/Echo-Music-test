@@ -27,6 +27,8 @@ import iad1tya.echo.music.utils.potoken.PoTokenGenerator
 import iad1tya.echo.music.utils.potoken.PoTokenResult
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 
 object YTPlayerUtils {
     private const val logTag = "YTPlayerUtils"
@@ -37,6 +39,30 @@ object YTPlayerUtils {
      * for privately-owned/uploaded tracks, which cannot be fetched by NewPipe directly.
      */
     @Volatile private var cachedPublicVideoId: String? = null
+
+
+    private val backgroundVideoFallbackIds = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+    @Volatile private var lastForcedRefreshVideoId: String? = null
+    @Volatile private var lastForcedRefreshAtMs: Long = 0L
+
+    fun markDirectAudioForbidden(videoId: String): Boolean {
+        val alreadyMarked = backgroundVideoFallbackIds.contains(videoId)
+        backgroundVideoFallbackIds.add(videoId)
+        return alreadyMarked
+    }
+
+    fun isBackgroundVideoFallbackEnabled(videoId: String): Boolean =
+        backgroundVideoFallbackIds.contains(videoId)
+
+    fun shouldSuppressForceRefresh(videoId: String): Boolean {
+        val now = System.currentTimeMillis()
+        val recent = lastForcedRefreshVideoId == videoId && (now - lastForcedRefreshAtMs) < 8000L
+        if (!recent) {
+            lastForcedRefreshVideoId = videoId
+            lastForcedRefreshAtMs = now
+        }
+        return recent
+    }
 
     private val poTokenGenerator = PoTokenGenerator()
 
@@ -252,6 +278,7 @@ object YTPlayerUtils {
                     responseToUse!!,
                     audioQuality,
                     connectivityManager,
+                    videoId,
                 )
 
                 if (format == null) {
@@ -377,31 +404,64 @@ object YTPlayerUtils {
             .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }
             .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata") }
     }
-
     private fun findFormat(
         playerResponse: PlayerResponse,
         audioQuality: AudioQuality,
         connectivityManager: ConnectivityManager,
+        videoId: String? = null,
     ): PlayerResponse.StreamingData.Format? {
         Timber.tag(logTag).d("Finding format with audioQuality: $audioQuality, network metered: ${connectivityManager.isActiveNetworkMetered}")
 
-        val format = playerResponse.streamingData?.adaptiveFormats
-            ?.filter { it.isAudio && it.isOriginal }
-            ?.maxByOrNull {
-                it.bitrate * when (audioQuality) {
-                    AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) -1 else 1
-                    AudioQuality.HIGH -> 1
-                    AudioQuality.LOW -> -1
-                } + (if (it.mimeType.startsWith("audio/webm")) 10240 else 0) // prefer opus stream
+        fun score(format: PlayerResponse.StreamingData.Format): Int {
+            val direction = when (audioQuality) {
+                AudioQuality.AUTO -> if (connectivityManager.isActiveNetworkMetered) -1 else 1
+                AudioQuality.HIGH -> 1
+                AudioQuality.LOW -> -1
             }
-
-        if (format != null) {
-            Timber.tag(logTag).d("Selected format: ${format.mimeType}, bitrate: ${format.bitrate}")
-        } else {
-            Timber.tag(logTag).d("No suitable audio format found")
+            val codecBoost = when {
+                format.mimeType.startsWith("audio/webm") -> 10240
+                format.mimeType.contains("mp4") -> 4096
+                else -> 0
+            }
+            return format.bitrate * direction + codecBoost
         }
 
-        return format
+        if (videoId != null && backgroundVideoFallbackIds.contains(videoId)) {
+            val muxed = playerResponse.streamingData?.formats
+                ?.filter { (it.audioChannels ?: 0) > 0 }
+                ?.maxByOrNull(::score)
+            if (muxed != null) {
+                Timber.tag(logTag).d("Background video fallback active for $videoId; using muxed format: ${muxed.mimeType}, bitrate: ${muxed.bitrate}")
+                return muxed
+            }
+        }
+
+        val audioOnly = playerResponse.streamingData?.adaptiveFormats
+            ?.filter { it.isAudio && it.isOriginal }
+            ?.maxByOrNull(::score)
+        if (audioOnly != null) {
+            Timber.tag(logTag).d("Selected format: ${audioOnly.mimeType}, bitrate: ${audioOnly.bitrate}")
+            return audioOnly
+        }
+
+        val anyAudio = playerResponse.streamingData?.adaptiveFormats
+            ?.filter { it.isAudio }
+            ?.maxByOrNull(::score)
+        if (anyAudio != null) {
+            Timber.tag(logTag).d("Selected non-original audio format: ${anyAudio.mimeType}, bitrate: ${anyAudio.bitrate}")
+            return anyAudio
+        }
+
+        val muxedFallback = playerResponse.streamingData?.formats
+            ?.filter { (it.audioChannels ?: 0) > 0 }
+            ?.maxByOrNull(::score)
+        if (muxedFallback != null) {
+            Timber.tag(logTag).d("Selected muxed fallback format: ${muxedFallback.mimeType}, bitrate: ${muxedFallback.bitrate}")
+            return muxedFallback
+        }
+
+        Timber.tag(logTag).d("No suitable audio or muxed fallback format found")
+        return null
     }
     /**
      * Checks if the stream url returns a successful status.
@@ -416,23 +476,19 @@ object YTPlayerUtils {
             val requestBuilder = okhttp3.Request.Builder()
                 .get()
                 .url(url)
-                .header("Range", "bytes=0-0")
-                .header("Accept", "*/*")
-                .header("Accept-Encoding", "identity")
                 .header("User-Agent", StreamClientUtils.resolveUserAgent(clientParam))
+                .header("Accept-Encoding", "identity")
+                .header("Range", "bytes=0-0")
 
             val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
             originReferer.origin?.let { requestBuilder.addHeader("Origin", it) }
             originReferer.referer?.let { requestBuilder.addHeader("Referer", it) }
-            YouTube.cookie?.let { cookie -> requestBuilder.addHeader("Cookie", cookie) }
+            YouTube.cookie?.takeIf { it.isNotBlank() }?.let { requestBuilder.addHeader("Cookie", it) }
 
             httpClient.newCall(requestBuilder.build()).execute().use { response ->
-                val code = response.code
-                val isSuccessful = code == 200 || code == 206
-                Timber.tag(logTag).d(
-                    "Stream URL validation result: ${if (isSuccessful) "Success" else "Failed"} ($code)"
-                )
-                return isSuccessful
+                val ok = response.isSuccessful || response.code == 206
+                Timber.tag(logTag).d("Stream URL validation result: ${if (ok) "Success" else "Failed"} (${response.code})")
+                return ok
             }
         } catch (e: Exception) {
             Timber.tag(logTag).e(e, "Stream URL validation failed with exception")
@@ -533,6 +589,10 @@ object YTPlayerUtils {
      * Called on playback errors to ensure fresh streams on retry.
      */
     fun forceRefreshForVideo(videoId: String) {
+        if (shouldSuppressForceRefresh(videoId)) {
+            Timber.tag(logTag).d("Suppressing duplicate force refresh for videoId: $videoId")
+            return
+        }
         Timber.tag(logTag).d("Force refreshing caches for videoId: $videoId")
         // NewPipe manages its own JS player cache internally.
         // This method exists so error handlers can call it consistently.
