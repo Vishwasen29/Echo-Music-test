@@ -111,7 +111,7 @@ fun ContentSettings(
     val (hideYoutubeShorts, onHideYoutubeShortsChange) = rememberPreference(key = HideYoutubeShortsKey, defaultValue = false)
     val (playerStreamClient, onPlayerStreamClientChange) = rememberEnumPreference(
         key = PlayerStreamClientKey,
-        defaultValue = PlayerStreamClient.ANDROID_VR
+        defaultValue = PlayerStreamClient.ANDROID
     )
     val (webClientPoTokenEnabled) = rememberPreference(key = WebClientPoTokenEnabledKey, defaultValue = false)
     val (proxyEnabled, onProxyEnabledChange) = rememberPreference(key = ProxyEnabledKey, defaultValue = false)

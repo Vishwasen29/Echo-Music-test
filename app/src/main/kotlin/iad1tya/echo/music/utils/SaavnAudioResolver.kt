@@ -9,6 +9,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.net.URLDecoder
 import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -114,7 +115,6 @@ object SaavnAudioResolver {
         val thumbnailUrl: String?,
 
     )
-
     suspend fun resolve(
         mediaMetadata: MediaMetadata,
         audioQuality: AudioQuality,
@@ -136,21 +136,47 @@ object SaavnAudioResolver {
                         .thenByDescending { qualityScore(it.first.downloadLinks) }
                 )
 
-            ranked.take(8).forEach { (candidate, candidateScore) ->
-                if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) return@forEach
-
+            for ((candidate, candidateScore) in ranked) {
+                if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
                 val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
                     candidate
                 } else {
                     fetchSong(candidate.id) ?: candidate
                 }
 
-                val chosenLink = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: return@forEach
+                for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
+                    val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
+                    return@runCatching ResolvedStream(
+                        url = cleanedUrl,
+                        bitrate = link.bitrate.takeIf { it > 0 },
+                        mimeType = inferMimeType(cleanedUrl),
+                        sampleRate = 44100,
+                        provider = "Saavn",
+                        songId = hydrated.id,
+                        matchedTitle = hydrated.title,
+                        matchedArtists = hydrated.artists,
+                        thumbnailUrl = hydrated.thumbnailUrl,
+                        albumTitle = hydrated.albumName,
+                        durationSeconds = hydrated.duration,
+                    )
+                }
+            }
 
+            null
+        }
+    }
+    suspend fun resolveById(
+        sourceSongId: String,
+        audioQuality: AudioQuality,
+    ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
+        runCatching {
+            val hydrated = fetchSong(sourceSongId) ?: return@runCatching null
+            for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
+                val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
                 return@runCatching ResolvedStream(
-                    url = chosenLink.url,
-                    bitrate = chosenLink.bitrate.takeIf { it > 0 },
-                    mimeType = inferMimeType(chosenLink.url),
+                    url = cleanedUrl,
+                    bitrate = link.bitrate.takeIf { it > 0 },
+                    mimeType = inferMimeType(cleanedUrl),
                     sampleRate = 44100,
                     provider = "Saavn",
                     songId = hydrated.id,
@@ -161,32 +187,7 @@ object SaavnAudioResolver {
                     durationSeconds = hydrated.duration,
                 )
             }
-
             null
-        }
-    }
-
-
-    suspend fun resolveById(
-        sourceSongId: String,
-        audioQuality: AudioQuality,
-    ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
-        runCatching {
-            val hydrated = fetchSong(sourceSongId) ?: return@runCatching null
-            val chosenLink = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: return@runCatching null
-            ResolvedStream(
-                url = chosenLink.url,
-                bitrate = chosenLink.bitrate.takeIf { it > 0 },
-                mimeType = inferMimeType(chosenLink.url),
-                sampleRate = 44100,
-                provider = "Saavn",
-                songId = hydrated.id,
-                matchedTitle = hydrated.title,
-                matchedArtists = hydrated.artists,
-            thumbnailUrl = hydrated.thumbnailUrl,
-            albumTitle = hydrated.albumName,
-            durationSeconds = hydrated.duration,
-            )
         }
     }
 
@@ -548,7 +549,6 @@ object SaavnAudioResolver {
 
         return (primaryArtists + extraArtists).toList()
     }
-
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
         val list = mutableListOf<DownloadLink>()
         val arrays = listOf(
@@ -560,48 +560,66 @@ object SaavnAudioResolver {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
                 val rawUrl = item.optString("url").trim()
-                if (rawUrl.isBlank()) continue
+                val url = normalizeDownloadUrl(rawUrl) ?: continue
                 val quality = item.optString("quality").ifBlank { item.optString("bitrate") }.trim()
                 list += DownloadLink(
                     quality = quality,
-                    url = decodeSaavnUrl(rawUrl),
+                    url = url,
                     bitrate = parseBitrate(quality),
                 )
             }
         }
 
-        listOf(
-            json.optString("media_preview_url"),
-            json.optString("preview_url"),
-            json.optString("encrypted_media_url"),
-            json.optString("vlink"),
-            json.optString("perma_url"),
-        ).map { it.trim() }
-            .filter { it.isNotBlank() }
-            .forEach { rawUrl ->
-                list += DownloadLink(
-                    quality = "fallback",
-                    url = decodeSaavnUrl(rawUrl),
-                    bitrate = 128000,
-                )
-            }
+        val directCandidates = listOf(
+            json.optString("vlink").trim(),
+            json.optString("media_preview_url").trim(),
+            json.optString("preview_url").trim(),
+        )
+        directCandidates.forEach { raw ->
+            val url = normalizeDownloadUrl(raw) ?: return@forEach
+            list += DownloadLink(
+                quality = "preview",
+                url = url,
+                bitrate = parseBitrate("96kbps"),
+            )
+        }
 
-        return list
-            .filter { it.url.isNotBlank() }
-            .distinctBy { it.url }
+        return list.distinctBy { it.url }
+    }
+
+    private fun normalizeDownloadUrl(raw: String?): String? {
+        var value = raw?.trim().orEmpty()
+        if (value.isBlank()) return null
+        repeat(2) {
+            value = runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        }
+        return value.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+    }
+
+    private fun orderedDownloadLinks(
+        links: List<DownloadLink>,
+        audioQuality: AudioQuality,
+    ): List<DownloadLink> {
+        val normalized = links.mapNotNull { link ->
+            normalizeDownloadUrl(link.url)?.let { cleaned -> link.copy(url = cleaned) }
+        }.distinctBy { it.url }
+
+        return when (audioQuality) {
+            AudioQuality.LOW -> normalized.sortedWith(
+                compareBy<DownloadLink> { if (it.bitrate > 0) it.bitrate else Int.MAX_VALUE }
+                    .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
+            )
+            AudioQuality.AUTO, AudioQuality.HIGH -> normalized.sortedWith(
+                compareByDescending<DownloadLink> { it.bitrate }
+                    .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
+            )
+        }
     }
 
     private fun pickDownloadLink(
         links: List<DownloadLink>,
         audioQuality: AudioQuality,
-    ): DownloadLink? {
-        if (links.isEmpty()) return null
-        val sorted = links.sortedBy { it.bitrate }
-        return when (audioQuality) {
-            AudioQuality.LOW -> sorted.firstOrNull { it.bitrate in 1..160000 } ?: sorted.first()
-            AudioQuality.AUTO, AudioQuality.HIGH -> sorted.last()
-        }
-    }
+    ): DownloadLink? = orderedDownloadLinks(links, audioQuality).firstOrNull()
 
     private fun qualityScore(links: List<DownloadLink>): Int = links.maxOfOrNull { it.bitrate } ?: 0
 

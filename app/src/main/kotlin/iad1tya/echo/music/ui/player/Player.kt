@@ -958,7 +958,7 @@ fun BottomSheetPlayer(
                     }
                     
                     // Switch to Video button - above song title (only show for rectangular thumbnails, and not in lyrics mode)
-                    if (!showInlineLyrics && mediaMetadata.id.isNotEmpty() && isRectangularThumbnail) {
+                    if (false && !showInlineLyrics && mediaMetadata.id.isNotEmpty() && isRectangularThumbnail) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(12.dp))

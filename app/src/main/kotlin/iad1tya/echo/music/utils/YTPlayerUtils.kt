@@ -54,15 +54,8 @@ object YTPlayerUtils {
      * - Then various client fallbacks
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
-        TVHTML5_SIMPLY_EMBEDDED_PLAYER,  // Try embedded player first for age-restricted content
-        TVHTML5,
-        ANDROID_VR_1_43_32,
-        ANDROID_VR_1_61_48,
-        ANDROID_CREATOR,
-        IPADOS,
-        ANDROID_VR_NO_AUTH,
-        MOBILE,
         IOS,
+        MOBILE,
         WEB,
         WEB_CREATOR
     )
@@ -85,7 +78,7 @@ object YTPlayerUtils {
         playlistId: String? = null,
         audioQuality: AudioQuality,
         connectivityManager: ConnectivityManager,
-        preferredStreamClient: PlayerStreamClient = PlayerStreamClient.ANDROID_VR,
+        preferredStreamClient: PlayerStreamClient = PlayerStreamClient.ANDROID,
         webClientPoTokenEnabled: Boolean = false,
         useVisitorData: Boolean = false,
         manualGvsPoToken: String? = null,
@@ -116,7 +109,7 @@ object YTPlayerUtils {
         Timber.tag(logTag).d("Session authentication status: ${if (isLoggedIn) "Logged in" else "Not logged in"}")
 
         val preferredClient = when (preferredStreamClient) {
-            PlayerStreamClient.ANDROID_VR -> ANDROID_VR_NO_AUTH
+            PlayerStreamClient.ANDROID_VR -> MOBILE
             PlayerStreamClient.WEB_REMIX -> WEB_REMIX
             PlayerStreamClient.IOS -> IOS
             PlayerStreamClient.TVHTML5 -> TVHTML5
