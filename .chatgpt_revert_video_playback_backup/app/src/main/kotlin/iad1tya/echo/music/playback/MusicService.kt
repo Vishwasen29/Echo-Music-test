@@ -2957,14 +2957,28 @@ class MusicService :
                                 OkHttpClient
                                     .Builder()
                                     .proxy(YouTube.proxy)
+                                    .dns { hostname ->
+                                        InetAddress.getAllByName(hostname)
+                                            .sortedBy { if (it is Inet4Address) 0 else 1 }
+                                            .toList()
+                                    }
                                     .addInterceptor { chain ->
                                         val request = chain.request()
                                         val clientParam = request.url.queryParameter("c")
                                         val ua = StreamClientUtils.resolveUserAgent(clientParam)
                                         val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
+                                        val host = request.url.host.lowercase()
+                                        val isYoutubeMediaHost = host.contains("googlevideo.com") || host.contains("youtube.com") || host.contains("ytimg.com")
                                         val builder = request.newBuilder().header("User-Agent", ua)
                                         originReferer.origin?.let { builder.header("Origin", it) }
                                         originReferer.referer?.let { builder.header("Referer", it) }
+                                        if (isYoutubeMediaHost) {
+                                            builder.header("Accept-Encoding", "identity")
+                                            if (request.header("Range").isNullOrBlank()) {
+                                                builder.header("Range", "bytes=0-")
+                                            }
+                                            YouTube.cookie?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
+                                        }
                                         chain.proceed(builder.build())
                                     }
                                     .connectTimeout(5, TimeUnit.SECONDS)
