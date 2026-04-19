@@ -2946,12 +2946,34 @@ class MusicService :
                                     .proxy(YouTube.proxy)
                                     .addInterceptor { chain ->
                                         val request = chain.request()
-                                        val clientParam = request.url.queryParameter("c")
+                                        val url = request.url
+                                        val host = url.host
+                                        val clientParam = url.queryParameter("c")
                                         val ua = StreamClientUtils.resolveUserAgent(clientParam)
                                         val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
-                                        val builder = request.newBuilder().header("User-Agent", ua)
+                                        val builder = request.newBuilder()
+                                            .header("User-Agent", ua)
+
                                         originReferer.origin?.let { builder.header("Origin", it) }
                                         originReferer.referer?.let { builder.header("Referer", it) }
+
+                                        val isYoutubeMediaHost =
+                                            host.contains("googlevideo.com") ||
+                                                host.contains("youtube.com") ||
+                                                host.contains("ytimg.com")
+
+                                        if (isYoutubeMediaHost) {
+                                            builder.header("Accept-Encoding", "identity")
+                                            if (request.header("Range").isNullOrBlank()) {
+                                                builder.header("Range", "bytes=0-")
+                                            }
+                                            YouTube.cookie?.let { cookie ->
+                                                if (cookie.isNotBlank()) {
+                                                    builder.header("Cookie", cookie)
+                                                }
+                                            }
+                                        }
+
                                         chain.proceed(builder.build())
                                     }
                                     .connectTimeout(5, TimeUnit.SECONDS)
