@@ -306,6 +306,9 @@ class MusicService :
         }
 
     private val forcedYoutubeFallbackIds = mutableSetOf<String>()
+    private val recentYoutubeHttpFailures = mutableMapOf<String, Long>()
+    private val youtubeHttpFailureCooldownMs = 60_000L
+
     private val youtubeFallbackCooldownUntilMs = mutableMapOf<String, Long>()
     private val saavnRetryCount = mutableMapOf<String, Int>()
     private val maxSaavnRetryAttempts = 2
@@ -322,6 +325,19 @@ class MusicService :
     // CHATGPT_SAAVN_TRACE_END
 
     private var currentQueueTotalCount: Int? = null
+    private fun shouldThrottleYoutubeRecovery(mediaId: String): Boolean {
+        val last = recentYoutubeHttpFailures[mediaId] ?: return false
+        return System.currentTimeMillis() - last < youtubeHttpFailureCooldownMs
+    }
+
+    private fun markYoutubeHttpFailure(mediaId: String) {
+        recentYoutubeHttpFailures[mediaId] = System.currentTimeMillis()
+    }
+
+    private fun clearYoutubeHttpFailure(mediaId: String) {
+        recentYoutubeHttpFailures.remove(mediaId)
+    }
+
     private fun isSaavnBackedTrack(mediaId: String): Boolean {
         val format = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
         return format?.playbackUrl?.startsWith("saavn://") == true || ((format?.itag ?: 0) < 0)
@@ -2848,24 +2864,23 @@ class MusicService :
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
+        markYoutubeHttpFailure(mediaId)
 
-        if (forcedYoutubeFallbackIds.contains(mediaId) || hasExceededRetryLimit(mediaId)) {
-            Log.d("MusicService", "Stopping retry loop for page reload error on $mediaId")
+        if (forcedYoutubeFallbackIds.contains(mediaId) && shouldThrottleYoutubeRecovery(mediaId)) {
+            Log.d("MusicService", "Stopping page-reload loop for $mediaId")
             handleFinalFailure()
             return
         }
 
         retryJob?.cancel()
         retryJob = scope.launch {
-            songUrlCache.remove(mediaId)
+            performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS * 2)
 
+            val currentPosition = player.currentPosition
             val currentIndex = player.currentMediaItemIndex
-            if (currentIndex >= 0) {
-                player.seekToDefaultPosition(currentIndex)
-            }
+            player.seekTo(currentIndex, currentPosition)
             player.prepare()
-            player.playWhenReady = true
             Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
         }
     }
@@ -2873,6 +2888,13 @@ class MusicService :
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
+        markYoutubeHttpFailure(mediaId)
+
+        if (forcedYoutubeFallbackIds.contains(mediaId) && shouldThrottleYoutubeRecovery(mediaId)) {
+            Log.d("MusicService", "Stopping repeated 403 loop for $mediaId")
+            handleFinalFailure()
+            return
+        }
 
         songUrlCache.remove(mediaId)
         try {
@@ -3724,6 +3746,7 @@ class MusicService :
             if (streamUrl != null) {
                 val expiry = System.currentTimeMillis() + (playbackData.streamExpiresInSeconds * 1000L)
                 songUrlCache[mediaId] = streamUrl to expiry
+                clearYoutubeHttpFailure(mediaId)
                 markYoutubeResolved(mediaId, "Using YouTube Music stream after JioSaavn lookup did not win")
                 streamUrl
             } else {

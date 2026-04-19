@@ -61,8 +61,8 @@ object YTPlayerUtils {
      * - Then various client fallbacks
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
-        IOS,
         MOBILE,
+        IOS,
         WEB
     )
     data class PlaybackData(
@@ -115,11 +115,11 @@ object YTPlayerUtils {
         Timber.tag(logTag).d("Session authentication status: ${if (isLoggedIn) "Logged in" else "Not logged in"}")
 
         val preferredClient = when (preferredStreamClient) {
-            PlayerStreamClient.ANDROID_VR -> IOS
+            PlayerStreamClient.ANDROID_VR -> MOBILE
             PlayerStreamClient.WEB_REMIX -> WEB_REMIX
             PlayerStreamClient.IOS -> IOS
             PlayerStreamClient.TVHTML5 -> TVHTML5
-            PlayerStreamClient.ANDROID -> IOS
+            PlayerStreamClient.ANDROID -> MOBILE
         }
 
         // Generate PoToken for clients that require it (WEB_REMIX, TVHTML5)
@@ -299,14 +299,9 @@ object YTPlayerUtils {
                 // then continues past the valid TVHTML5 stream to eventual WEB_CREATOR failure.
                 val isPrivatelyOwned = streamPlayerResponse?.videoDetails?.musicVideoType ==
                     "MUSIC_VIDEO_TYPE_PRIVATELY_OWNED_TRACK" || isUploadedTrack || isPrivateTrack
-                val shouldTrustDirectAudioUrl =
-                    format?.isAudio == true && client in listOf(IOS, MOBILE, WEB)
-
-                if (clientIndex == streamClients.size - 1 || isPrivatelyOwned || shouldTrustDirectAudioUrl) {
+                if (clientIndex == streamClients.size - 1 || isPrivatelyOwned) {
                     if (isPrivatelyOwned) {
                         Timber.tag(logTag).d("Skipping validation for privately owned/uploaded track (client: ${client.clientName})")
-                    } else if (shouldTrustDirectAudioUrl) {
-                        Timber.tag(logTag).d("Trusting direct audio stream for client without preflight validation: ${client.clientName}")
                     } else {
                         Timber.tag(logTag).d("Using last fallback client without validation: ${client.clientName}")
                     }
@@ -423,19 +418,17 @@ object YTPlayerUtils {
                 .url(url)
                 .header("Range", "bytes=0-0")
                 .header("Accept", "*/*")
+                .header("Accept-Encoding", "identity")
                 .header("User-Agent", StreamClientUtils.resolveUserAgent(clientParam))
 
             val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
             originReferer.origin?.let { requestBuilder.addHeader("Origin", it) }
             originReferer.referer?.let { requestBuilder.addHeader("Referer", it) }
-
-            YouTube.cookie?.let { cookie ->
-                requestBuilder.addHeader("Cookie", cookie)
-            }
+            YouTube.cookie?.let { cookie -> requestBuilder.addHeader("Cookie", cookie) }
 
             httpClient.newCall(requestBuilder.build()).execute().use { response ->
                 val code = response.code
-                val isSuccessful = code in listOf(200, 204, 206)
+                val isSuccessful = code == 200 || code == 206
                 Timber.tag(logTag).d(
                     "Stream URL validation result: ${if (isSuccessful) "Success" else "Failed"} ($code)"
                 )
