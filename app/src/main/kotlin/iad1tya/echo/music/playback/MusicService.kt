@@ -104,14 +104,7 @@ import iad1tya.echo.music.constants.DiscordStatusKey
 import iad1tya.echo.music.constants.DiscordTokenKey
 import iad1tya.echo.music.constants.DiscordUseDetailsKey
 import iad1tya.echo.music.constants.EnableDiscordRPCKey
-import iad1tya.echo.music.constants.EnableLastFMScrobblingKey
-import iad1tya.echo.music.constants.LastFMUseNowPlaying
-import iad1tya.echo.music.constants.ScrobbleDelayPercentKey
-import iad1tya.echo.music.constants.ScrobbleDelaySecondsKey
-import iad1tya.echo.music.constants.ScrobbleMinSongDurationKey
-import com.metrolist.lastfm.LastFM
 import iad1tya.echo.music.utils.DiscordRPC
-import iad1tya.echo.music.utils.ScrobbleManager
 import android.os.Handler
 import android.os.Looper
 import iad1tya.echo.music.constants.DisableLoadMoreWhenRepeatAllKey
@@ -312,7 +305,6 @@ class MusicService :
 
     private val forcedYoutubeFallbackIds = mutableSetOf<String>()
 
-
     // CHATGPT_SAAVN_TRACE_START
     data class PlaybackSourceTrace(
         val mediaId: String,
@@ -325,7 +317,6 @@ class MusicService :
     // CHATGPT_SAAVN_TRACE_END
 
     private var currentQueueTotalCount: Int? = null
-
 
     private fun isSaavnBackedTrack(mediaId: String): Boolean {
         val format = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
@@ -402,7 +393,6 @@ class MusicService :
             }
         }
     }
-
 
     private fun buildResolvedSaavnMetadata(
         mediaId: String,
@@ -502,7 +492,6 @@ class MusicService :
 
     val playerRecommendations = MutableStateFlow<List<PlayerRecommendation>>(emptyList())
 
-
     private var consecutivePlaybackErr = 0
     private var retryJob: Job? = null
 
@@ -537,9 +526,6 @@ class MusicService :
             appWidgetManager.getAppWidgetIds(ComponentName(this, AdaptiveMusicWidgetProvider::class.java)).isNotEmpty()
     }
     // CHATGPT_BATTERY_OPTIMIZATION_PATCH_END
-
-    // Last.fm scrobbling
-    private var scrobbleManager: ScrobbleManager? = null
 
     // Crossfade state
     private var crossfadeEnabled = false
@@ -1048,53 +1034,6 @@ class MusicService :
                 }
             }
 
-        // Last.fm scrobble initialization
-        dataStore.data
-            .map { it[EnableLastFMScrobblingKey] ?: false }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                if (enabled && scrobbleManager == null) {
-                    val delayPercent = dataStore.get(ScrobbleDelayPercentKey, LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT)
-                    val minSongDuration = dataStore.get(ScrobbleMinSongDurationKey, LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION)
-                    val delaySeconds = dataStore.get(ScrobbleDelaySecondsKey, LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS)
-                    scrobbleManager = ScrobbleManager(
-                        scope,
-                        minSongDuration = minSongDuration,
-                        scrobbleDelayPercent = delayPercent,
-                        scrobbleDelaySeconds = delaySeconds
-                    )
-                    scrobbleManager?.useNowPlaying = dataStore.get(LastFMUseNowPlaying, false)
-                } else if (!enabled && scrobbleManager != null) {
-                    scrobbleManager?.destroy()
-                    scrobbleManager = null
-                }
-            }
-
-        dataStore.data
-            .map { it[LastFMUseNowPlaying] ?: false }
-            .distinctUntilChanged()
-            .collectLatest(scope) {
-                scrobbleManager?.useNowPlaying = it
-            }
-
-        dataStore.data
-            .map { prefs ->
-                Triple(
-                    prefs[ScrobbleDelayPercentKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT,
-                    prefs[ScrobbleMinSongDurationKey] ?: LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION,
-                    prefs[ScrobbleDelaySecondsKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS
-                )
-            }
-            .distinctUntilChanged()
-            .collect(scope) { (delayPercent, minSongDuration, delaySeconds) ->
-                scrobbleManager?.let {
-                    it.scrobbleDelayPercent = delayPercent
-                    it.minSongDuration = minSongDuration
-                    it.scrobbleDelaySeconds = delaySeconds
-                }
-            }
-
         // Watch Discord customization preferences
         dataStore.data
             .map {
@@ -1308,7 +1247,6 @@ class MusicService :
     }
     
 
-
     private fun waitOnNetworkError() {
         waitingForNetworkConnection.value = true
     }
@@ -1431,7 +1369,6 @@ class MusicService :
         }
     }
 
-
     private fun normalizeRecommendationKey(title: String, artists: String): String {
         return (title + " " + artists)
             .lowercase()
@@ -1545,7 +1482,6 @@ class MusicService :
         playerRecommendations.value = emptyList()
     }
 
-
     suspend fun addRecommendationToYoutubePlaylist(
         playlistId: String,
         matchedYoutubeId: String,
@@ -1553,7 +1489,6 @@ class MusicService :
         YouTube.addToPlaylist(playlistId, matchedYoutubeId).getOrThrow()
         matchedYoutubeId
     }
-
 
     private fun normalizeSaavnSearchText(value: String): String {
         return value
@@ -2029,7 +1964,6 @@ class MusicService :
         }
     }
 
-
     private fun releaseLoudnessEnhancer() {
         try {
             loudnessEnhancer?.release()
@@ -2327,10 +2261,7 @@ class MusicService :
             startManualSkipCrossfadeIn()
         }
 
-        // Last.fm scrobble on track change
-        scrobbleManager?.onSongStop()
         if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-            scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
         }
 
         // TTS Song Announcement
@@ -2413,8 +2344,7 @@ class MusicService :
         }
 
         if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
-            scrobbleManager?.onSongStop()
-        }
+            }
         
         // Reset consecutive error counter when playback is successful
         if (playbackState == Player.STATE_READY) {
@@ -2490,9 +2420,7 @@ class MusicService :
             currentMediaMetadata.value = player.currentMetadata
         }
 
-        // Last.fm scrobble state tracking
         if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-            scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
         }
 
         // Discord RPC updates
@@ -3461,10 +3389,6 @@ class MusicService :
         hapticsPollingJob?.cancel()
         hapticsManager.stop()
 
-        // Last.fm cleanup
-        scrobbleManager?.destroy()
-        scrobbleManager = null
-
         // Discord cleanup
         if (discordRpc?.isRpcRunning() == true) {
             discordRpc?.closeRPC()
@@ -3500,8 +3424,6 @@ class MusicService :
         
         super.onDestroy()
     }
-
-
 
     private data class ExternalResolvedUrl(
         val url: String,
@@ -3690,7 +3612,6 @@ class MusicService :
         }
     }
 
-
     override fun onBind(intent: Intent?) = super.onBind(intent) ?: binder
 
     override fun onTaskRemoved(rootIntent: Intent?) {
@@ -3775,7 +3696,6 @@ class MusicService :
             )
         }
     }
-
 
     inner class MusicBinder : Binder() {
         val service: MusicService

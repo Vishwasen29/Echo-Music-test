@@ -80,28 +80,9 @@ jobs:
           fi
           ls -l "$HOME/.android/debug.keystore"
 
-      - name: Provide Firebase config for CI
-        env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-        run: |
-          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-            printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-          elif [ -f app/google-services.json ]; then
-            echo "Using committed app/google-services.json"
-          elif [ -f app/google-services.json.example ]; then
-            cp app/google-services.json.example app/google-services.json
-          elif [ -f app/google-services.json.template ]; then
-            cp app/google-services.json.template app/google-services.json
-          else
-            echo "No google-services.json or fallback template found." >&2
-            exit 1
-          fi
-
       - name: Build ${{ matrix.name }}
         env:
           CI: true
-          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
         run: ./gradlew --stacktrace --no-daemon ${{ matrix.task }}
 
       - name: Upload ${{ matrix.name }} APK

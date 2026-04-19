@@ -1,5 +1,4 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -8,14 +7,6 @@ plugins {
     alias(libs.plugins.hilt)
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.compose.compiler)
-    id("com.google.gms.google-services")
-    id("com.google.firebase.crashlytics")
-}
-
-val localProperties = Properties()
-val localPropertiesFile = rootProject.file("local.properties")
-if (localPropertiesFile.exists()) {
-    localProperties.load(localPropertiesFile.inputStream())
 }
 
 android {
@@ -23,16 +14,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "iad1tya.echo.music"
+        applicationId = "com.vishwa.echo"
         minSdk = 26
         targetSdk = 36
         versionCode = 420
         versionName = "4.2.0"
-
-        val lastFmKey = localProperties.getProperty("LASTFM_API_KEY") ?: System.getenv("LASTFM_API_KEY") ?: ""
-        val lastFmSecret = localProperties.getProperty("LASTFM_SECRET") ?: System.getenv("LASTFM_SECRET") ?: ""
-        buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
-        buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -106,7 +92,6 @@ android {
             )
         }
         debug {
-            applicationIdSuffix = ".debug"
             isDebuggable = true
             signingConfig = signingConfigs.getByName("debug")
         }
@@ -257,7 +242,6 @@ dependencies {
     implementation(project(":innertube"))
     implementation(project(":kizzy"))
     implementation(project(":kugou"))
-    implementation(project(":lastfm"))
     implementation(project(":lrclib"))
 
     implementation(libs.ktor.client.core)
@@ -276,9 +260,6 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     
     // Firebase
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.analytics)
-    implementation(libs.firebase.crashlytics)
     
     // Music Recognition
     implementation("com.github.f4b6a3:uuid-creator:6.1.1")

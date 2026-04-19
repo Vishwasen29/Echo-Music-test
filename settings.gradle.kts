@@ -15,12 +15,11 @@ dependencyResolutionManagement {
 //     id("org.gradle.toolchains.foojay-resolver-convention") version("1.0.0")
 // }
 
-rootProject.name = "Echo"
+rootProject.name = "Echo++"
 include(":app")
 include(":innertube")
 include(":kizzy")
 include(":kugou")
-include(":lastfm")
 include(":lrclib")
 
 // Use a local copy of NewPipe Extractor by uncommenting the lines below.

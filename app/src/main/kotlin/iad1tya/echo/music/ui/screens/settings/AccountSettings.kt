@@ -329,7 +329,6 @@ fun AccountSettings(
             )
         }
 
-
         // Import from Spotify — individual card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -554,33 +553,6 @@ fun AccountSettings(
                 )
                 Text(
                     text = stringResource(R.string.discord_integration),
-                    style = MaterialTheme.typography.bodyLarge
-                )
-            }
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 18.dp),
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        onClose()
-                        navController.navigate("settings/lastfm")
-                    }
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.music_note),
-                    contentDescription = null,
-                    modifier = Modifier.size(22.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    text = stringResource(R.string.lastfm_integration),
                     style = MaterialTheme.typography.bodyLarge
                 )
             }

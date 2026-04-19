@@ -19,12 +19,7 @@ import com.echo.innertube.YouTube
 import com.echo.innertube.models.YouTubeLocale
 import com.echo.kugou.KuGou
 import iad1tya.echo.music.utils.potoken.AppContextHolder
-import com.google.firebase.FirebaseApp
-import com.google.firebase.analytics.FirebaseAnalytics
-import com.google.firebase.crashlytics.FirebaseCrashlytics
-import iad1tya.echo.music.BuildConfig
 import iad1tya.echo.music.constants.*
-import com.metrolist.lastfm.LastFM
 import iad1tya.echo.music.canvas.CanvasArtworkPlaybackCache
 import iad1tya.echo.music.di.ApplicationScope
 import iad1tya.echo.music.extensions.toEnum
@@ -64,33 +59,6 @@ class App : Application(), SingletonImageLoader.Factory {
         Thread.setDefaultUncaughtExceptionHandler(CrashHandler(applicationContext))
         Timber.plant(Timber.DebugTree())
         Timber.plant(DiagnosticsLogTree())
-
-        // Initialize Firebase with error handling
-        try {
-            val firebaseApp = FirebaseApp.initializeApp(this)
-            if (firebaseApp != null) {
-                // Enable Firebase Crashlytics collection
-                try {
-                    FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
-                } catch (e: Exception) {
-                    Timber.w(e, "Failed to enable Crashlytics")
-                }
-                
-                // Set user properties for Firebase Analytics
-                try {
-                    FirebaseAnalytics.getInstance(this).apply {
-                        setUserProperty("app_version", BuildConfig.VERSION_NAME)
-                        setUserProperty("architecture", BuildConfig.ARCHITECTURE)
-                    }
-                } catch (e: Exception) {
-                    Timber.w(e, "Failed to set Firebase Analytics properties")
-                }
-            } else {
-                Timber.w("Firebase initialization returned null - continuing without Firebase")
-            }
-        } catch (e: Exception) {
-            Timber.w(e, "Failed to initialize Firebase - app will continue without Firebase services")
-        }
 
         // تهيئة إعدادات التطبيق عند الإقلاع
         applicationScope.launch {
@@ -156,17 +124,6 @@ class App : Application(), SingletonImageLoader.Factory {
         }
 
         YouTube.useLoginForBrowse = settings[UseLoginForBrowse] ?: true
-
-        // Initialize Last.fm
-        LastFM.initialize(
-            apiKey = BuildConfig.LASTFM_API_KEY,
-            secret = BuildConfig.LASTFM_SECRET,
-        )
-        settings[LastFMSessionKey]?.let { sessionKey ->
-            if (sessionKey.isNotEmpty()) {
-                LastFM.sessionKey = sessionKey
-            }
-        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
@@ -237,16 +194,6 @@ class App : Application(), SingletonImageLoader.Factory {
                         Timber.e(e, "Could not parse cookie. Clearing existing cookie.")
                         forgetAccount(this@App)
                     }
-                }
-        }
-
-        // Sync Last.fm session key
-        applicationScope.launch(Dispatchers.IO) {
-            dataStore.data
-                .map { it[LastFMSessionKey] ?: "" }
-                .distinctUntilChanged()
-                .collect { sessionKey ->
-                    LastFM.sessionKey = sessionKey.ifEmpty { null }
                 }
         }
 

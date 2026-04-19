@@ -78,13 +78,11 @@ import iad1tya.echo.music.ui.screens.settings.AiSettings
 import iad1tya.echo.music.ui.screens.settings.DiscordLoginScreen
 import iad1tya.echo.music.ui.screens.settings.DiagnosticsSettings
 import iad1tya.echo.music.ui.screens.settings.DiscordSettings
-import iad1tya.echo.music.ui.screens.settings.LastFMSettings
 import iad1tya.echo.music.ui.screens.settings.NetworkTroubleshootSettings
 import iad1tya.echo.music.ui.utils.ShowMediaInfo
 import iad1tya.echo.music.ui.player.VideoPlayerScreen
 import iad1tya.echo.music.utils.rememberEnumPreference
 import iad1tya.echo.music.utils.rememberPreference
-
 
 @OptIn(ExperimentalMaterial3Api::class)
 fun NavGraphBuilder.navigationBuilder(
@@ -377,9 +375,6 @@ fun NavGraphBuilder.navigationBuilder(
     }
     composable("settings/discord/login") {
         DiscordLoginScreen(navController)
-    }
-    composable("settings/lastfm") {
-        LastFMSettings(navController, scrollBehavior)
     }
     composable("listen_together") {
         ListenTogetherScreen(navController)
