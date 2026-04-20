@@ -313,6 +313,7 @@ class MusicService :
     private val youtubeFallbackCooldownUntilMs = mutableMapOf<String, Long>()
     private val saavnRetryCount = mutableMapOf<String, Int>()
     private val maxSaavnRetryAttempts = 2
+    private var nextTrackWarmupJob: kotlinx.coroutines.Job? = null
 
     // CHATGPT_SAAVN_TRACE_START
     data class PlaybackSourceTrace(
@@ -3031,7 +3032,9 @@ class MusicService :
 
             // Prefer JioSaavn before reusing a cached YouTube URL.
             val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
-            val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
+            val preferSaavnBeforeYoutubeCache =
+                !mediaId.startsWith("saavn:") &&
+                    !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
             if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 return@Factory dataSpec.withUri(cachedUrlEntry.first.toUri())
@@ -3593,14 +3596,19 @@ class MusicService :
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
         if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) {
-            Log.d("MusicService", "Skipping JioSaavn for $mediaId because forced YouTube fallback is active")
-            updatePlaybackSourceTrace(
-                mediaId = mediaId,
-                attemptedSource = "JioSaavn",
-                finalSource = "YouTube Music",
-                detail = "Forced YouTube fallback is active for this track",
-            )
-            return null
+            if (isYoutubeFallbackCoolingDown(mediaId)) {
+                Log.d("MusicService", "Skipping JioSaavn for $mediaId because YouTube fallback cooldown is active")
+                updatePlaybackSourceTrace(
+                    mediaId = mediaId,
+                    attemptedSource = "JioSaavn",
+                    finalSource = "YouTube Music",
+                    detail = "YouTube fallback cooldown is active for this track",
+                )
+                return null
+            } else {
+                Log.d("MusicService", "Clearing stale forced YouTube fallback for $mediaId before retrying JioSaavn")
+                forcedYoutubeFallbackIds.remove(mediaId)
+            }
         }
 
         if (mediaId.startsWith("saavn:")) {
@@ -3745,9 +3753,45 @@ class MusicService :
         }
     }
 
+    private fun peekNextMediaId(): String? {
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty || player.currentMediaItemIndex == -1) return null
+        val nextIndex = timeline.getNextWindowIndex(
+            player.currentMediaItemIndex,
+            player.repeatMode,
+            player.shuffleModeEnabled,
+        )
+        if (nextIndex == -1 || nextIndex == player.currentMediaItemIndex) return null
+        return player.getMediaItemAt(nextIndex).mediaId.takeIf { it.isNotBlank() }
+    }
+
+    private fun scheduleNextTrackUrlWarmup() {
+        nextTrackWarmupJob?.cancel()
+        if (!player.playWhenReady) return
+
+        nextTrackWarmupJob = scope.launch(Dispatchers.IO) {
+            delay(400L)
+
+            val nextMediaId = withContext(Dispatchers.Main.immediate) { peekNextMediaId() } ?: return@launch
+            val cached = songUrlCache[nextMediaId]?.takeIf { it.second > System.currentTimeMillis() }
+            if (cached != null) return@launch
+
+            runCatching { getStreamUrl(nextMediaId) }
+                .onSuccess { warmed ->
+                    if (warmed != null) {
+                        Log.d("MusicService", "Warmed next track URL for $nextMediaId")
+                    }
+                }.onFailure {
+                    Log.d("MusicService", "Next track URL warmup failed for $nextMediaId: ${it.message}")
+                }
+        }
+    }
+
     suspend fun getStreamUrl(mediaId: String): String? {
         val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
-        val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
+        val preferSaavnBeforeYoutubeCache =
+            !mediaId.startsWith("saavn:") &&
+                !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
         if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
             return cachedUrlEntry.first
         }
