@@ -297,25 +297,31 @@ object SaavnAudioResolver {
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
         val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
         val album = mediaMetadata.album?.title?.trim().orEmpty()
-        val strippedTitle = normalizeTitleCore(title)
-        val hasArtist = primaryArtist.isNotBlank()
+        val strippedTitle = normalizeTitleCore(title).ifBlank { title }
 
-        val strictQueries = linkedSetOf<String>()
-        strictQueries += listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        strictQueries += listOf(strippedTitle, primaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        strictQueries += listOf(title, primaryArtist, secondaryArtist).filter { it.isNotBlank() }.joinToString(" ").trim()
-        strictQueries += listOf(strippedTitle, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" ").trim()
+        val queries = linkedSetOf<String>()
 
-        val fallbackQueries = linkedSetOf<String>()
-        if (!hasArtist) {
-            fallbackQueries += title
-            fallbackQueries += strippedTitle
+        fun add(vararg parts: String) {
+            val query = parts.map { it.trim() }.filter { it.isNotBlank() }.joinToString(" ").trim()
+            if (query.isNotBlank()) queries += query
         }
 
-        return buildList {
-            addAll(strictQueries.filter { it.isNotBlank() })
-            addAll(fallbackQueries.filter { it.isNotBlank() && it !in strictQueries })
+        add(title, primaryArtist)
+        add(strippedTitle, primaryArtist)
+        add(title, primaryArtist, secondaryArtist)
+        add(strippedTitle, primaryArtist, secondaryArtist)
+        add(title, album, primaryArtist)
+        add(strippedTitle, album, primaryArtist)
+
+        if (primaryArtist.isBlank()) {
+            add(title)
+            add(strippedTitle)
+        } else {
+            add(title, secondaryArtist)
+            add(strippedTitle, album)
         }
+
+        return queries.toList()
     }
 
     private fun search(query: String): List<Candidate> {
@@ -639,12 +645,19 @@ object SaavnAudioResolver {
         if (requestedPrimaryArtist.isBlank()) return true
 
         val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
-        if (candidatePrimaryArtist == requestedPrimaryArtist) return true
-        if (candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }) return true
 
-        return requestedArtists.any { wanted ->
-            candidateArtists.any { found -> artistNamesMatch(found, wanted) }
+        if (candidatePrimaryArtist.isBlank()) {
+            return candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
         }
+
+        if (artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)) return true
+
+        val requestedPrimaryAppearsSomewhere = candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+        if (!requestedPrimaryAppearsSomewhere) return false
+
+        // Allow reordered duet/collab credits, but reject tracks where a different singer is the
+        // primary artist and the requested primary artist only appears as a secondary/featured name.
+        return requestedArtists.any { wanted -> artistNamesMatch(candidatePrimaryArtist, wanted) }
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
@@ -653,18 +666,28 @@ object SaavnAudioResolver {
         val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
         val requestedTitle = normalizeTitleCore(requested.title)
         val candidateTitle = normalizeTitleCore(candidate.title)
-        val titleStrong = candidateTitle == requestedTitle ||
+        val titleExact = candidateTitle == requestedTitle
+        val titleStrong = titleExact ||
             candidateTitle.contains(requestedTitle) ||
             requestedTitle.contains(candidateTitle) ||
             tokenSimilarity(candidateTitle, requestedTitle) >= 32
+        val durationDiff = if (requested.duration > 0 && candidate.duration != null) {
+            kotlin.math.abs(candidate.duration - requested.duration)
+        } else {
+            0
+        }
         val durationClose = requested.duration <= 0 ||
             candidate.duration == null ||
-            kotlin.math.abs(candidate.duration - requested.duration) <= 18
+            durationDiff <= 15
 
         return if (requestedPrimaryArtist.isBlank()) {
             score >= 92 && titleStrong && durationClose
         } else {
-            score >= 96 && titleStrong && durationClose && hasStrongPrimaryArtistMatch(candidate, requested)
+            score >= 100 &&
+                titleStrong &&
+                durationClose &&
+                hasStrongPrimaryArtistMatch(candidate, requested) &&
+                (titleExact || durationDiff <= 8 || score >= 112)
         }
     }
 
@@ -691,9 +714,11 @@ object SaavnAudioResolver {
 
         if (requestedPrimaryArtist.isNotBlank()) {
             score += when {
-                candidatePrimaryArtist == requestedPrimaryArtist -> 125
-                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 96
-                candidateArtists.isNotEmpty() -> -55
+                artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist) -> 135
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } &&
+                    requestedArtists.any { artistNamesMatch(candidatePrimaryArtist, it) } -> 96
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 18
+                candidateArtists.isNotEmpty() -> -75
                 else -> -18
             }
         }

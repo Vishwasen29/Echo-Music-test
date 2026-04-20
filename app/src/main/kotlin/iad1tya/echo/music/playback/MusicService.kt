@@ -274,6 +274,7 @@ class MusicService :
     private var lyricsPreloadManager: LyricsPreloadManager? = null
     // CHATGPT_ALL_IN_ONE_HOTFIX
     private var queueAudioPrefetchManager: QueueAudioPrefetchManager? = null
+    private var nextTrackWarmupJob: Job? = null
 
     private val audioQuality by enumPreference(
         this,
@@ -2409,6 +2410,7 @@ class MusicService :
         // CHATGPT_REFINED_RECOMMENDATIONS_AND_LYRICS_DISABLED
         playerRecommendations.value = emptyList()
         queueAudioPrefetchManager?.onQueuePositionChanged(player)
+        scheduleNextTrackUrlWarmup()
 
         // Auto load more songs
         if (dataStore.get(AutoLoadMoreKey, true) &&
@@ -3707,6 +3709,40 @@ class MusicService :
                 playbackUrl = "saavn://${resolved.songId}",
             ),
         )
+    }
+
+    private fun peekNextMediaId(): String? {
+        val timeline = player.currentTimeline
+        if (timeline.isEmpty || player.currentMediaItemIndex == -1) return null
+        val nextIndex = timeline.getNextWindowIndex(
+            player.currentMediaItemIndex,
+            player.repeatMode,
+            player.shuffleModeEnabled,
+        )
+        if (nextIndex == -1 || nextIndex == player.currentMediaItemIndex) return null
+        return player.getMediaItemAt(nextIndex).mediaId.takeIf { it.isNotBlank() }
+    }
+
+    private fun scheduleNextTrackUrlWarmup() {
+        nextTrackWarmupJob?.cancel()
+        if (!player.playWhenReady) return
+
+        nextTrackWarmupJob = scope.launch(Dispatchers.IO) {
+            delay(350L)
+
+            val nextMediaId = withContext(Dispatchers.Main.immediate) { peekNextMediaId() } ?: return@launch
+            val cached = songUrlCache[nextMediaId]?.takeIf { it.second > System.currentTimeMillis() }
+            if (cached != null) return@launch
+
+            runCatching { getStreamUrl(nextMediaId) }
+                .onSuccess { warmed ->
+                    if (warmed != null) {
+                        Log.d("MusicService", "Warmed next track URL for $nextMediaId")
+                    }
+                }.onFailure {
+                    Log.d("MusicService", "Next track URL warmup failed for $nextMediaId: ${it.message}")
+                }
+        }
     }
 
     suspend fun getStreamUrl(mediaId: String): String? {
