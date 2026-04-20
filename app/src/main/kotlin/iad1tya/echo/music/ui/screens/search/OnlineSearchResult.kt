@@ -1,5 +1,7 @@
 package iad1tya.echo.music.ui.screens.search
 
+import androidx.compose.foundation.layout.fillMaxSize
+import coil3.compose.AsyncImage
 // CHATGPT_SEARCH_MIX_IMPORT_REPAIR
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -441,11 +443,19 @@ private fun SaavnSearchRow(
                     .background(if (isActive) MaterialTheme.colorScheme.primary else Color(0xFF242424)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "S",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                )
+                if (!song.thumbnailUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = song.thumbnailUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = "S",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
         },
         trailingContent = {

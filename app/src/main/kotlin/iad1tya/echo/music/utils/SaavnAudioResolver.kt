@@ -87,6 +87,7 @@ object SaavnAudioResolver {
         val duration: Int?,
         val language: String?,
         val albumName: String?,
+        val thumbnailUrl: String?,
     )
 
     data class RecommendationSeed(
@@ -240,9 +241,16 @@ object SaavnAudioResolver {
         runCatching {
             if (query.isBlank()) return@runCatching emptyList()
 
-            search(query)
+            val deduped = search(query)
                 .distinctBy { it.id }
-                .filter { !hasUnexpectedVariantTerms(it, query) }
+
+            val filtered = deduped.filter { candidate ->
+                !hasUnexpectedVariantTerms(candidate, query) || saavnSearchScore(candidate, query) >= 90
+            }
+
+            val candidates = if (filtered.isNotEmpty()) filtered else deduped
+
+            candidates
                 .sortedWith(
                     compareByDescending<Candidate> { saavnSearchScore(it, query) }
                         .thenByDescending { qualityScore(it.downloadLinks) }
@@ -257,6 +265,7 @@ object SaavnAudioResolver {
                         duration = candidate.duration,
                         language = candidate.language,
                         albumName = candidate.albumName,
+                        thumbnailUrl = candidate.thumbnailUrl,
                     )
                 }
         }

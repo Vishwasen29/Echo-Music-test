@@ -55,6 +55,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import androidx.compose.foundation.layout.fillMaxSize
+import coil3.compose.AsyncImage
 @Composable
 fun SaavnSongMenu(
     song: SaavnAudioResolver.SaavnSearchResult,
@@ -111,11 +113,19 @@ fun SaavnSongMenu(
                     .background(Color(0xFF242424), MaterialTheme.shapes.medium),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "S",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                )
+                if (!song.thumbnailUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = song.thumbnailUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = "S",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
             }
         },
     )
@@ -244,7 +254,7 @@ private fun saavnSearchResultToMetadata(song: SaavnAudioResolver.SaavnSearchResu
         title = song.title,
         artists = song.artists.map { MediaMetadata.Artist(id = null, name = it) },
         duration = song.duration ?: -1,
-        thumbnailUrl = null,
+        thumbnailUrl = song.thumbnailUrl,
         album = song.albumName?.let { title -> MediaMetadata.Album(id = "saavn:${song.sourceSongId}", title = title) },
         setVideoId = null,
         explicit = false,
@@ -260,19 +270,33 @@ private fun saavnSearchResultToMetadata(song: SaavnAudioResolver.SaavnSearchResu
 private suspend fun matchYoutubeSongForSaavn(
     source: SaavnAudioResolver.SaavnSearchResult,
 ): SongItem? {
-    val query = listOf(source.title, source.artists.firstOrNull().orEmpty())
-        .filter { it.isNotBlank() }
-        .joinToString(" ")
-        .trim()
-    if (query.isBlank()) return null
+    val queries = linkedSetOf(
+        listOf(source.title, source.artists.firstOrNull().orEmpty(), source.albumName.orEmpty())
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim(),
+        listOf(source.title, source.artists.firstOrNull().orEmpty())
+            .filter { it.isNotBlank() }
+            .joinToString(" ")
+            .trim(),
+        source.title.trim(),
+    ).filter { it.isNotBlank() }
 
-    return YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
-        .getOrNull()
-        ?.items
-        ?.filterIsInstance<SongItem>()
-        ?.map { candidate -> candidate to youtubeSongMatchScore(source, candidate) }
-        ?.filter { (_, score) -> score >= 85 }
-        ?.maxByOrNull { it.second }
+    if (queries.isEmpty()) return null
+
+    val candidates = linkedMapOf<String, SongItem>()
+    for (query in queries) {
+        YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
+            .getOrNull()
+            ?.items
+            ?.filterIsInstance<SongItem>()
+            ?.forEach { item -> candidates.putIfAbsent(item.id, item) }
+    }
+
+    return candidates.values
+        .map { candidate -> candidate to youtubeSongMatchScore(source, candidate) }
+        .filter { (_, score) -> score >= 68 }
+        .maxByOrNull { it.second }
         ?.first
 }
 
@@ -290,6 +314,8 @@ private fun youtubeSongMatchScore(
     val candidateTitle = normalize(candidate.title)
     val sourceArtists = source.artists.map(::normalize).filter { it.isNotBlank() }
     val candidateArtists = candidate.artists.map { normalize(it.name) }.filter { it.isNotBlank() }
+    val sourceAlbum = normalize(source.albumName.orEmpty())
+    val candidateAlbum = normalize(candidate.album?.name.orEmpty())
 
     val variantTerms = listOf(
         "remix", "mix", "version", "karaoke", "instrumental", "acoustic",
@@ -316,7 +342,15 @@ private fun youtubeSongMatchScore(
         score += when {
             candidateArtists.any { it in sourceArtists } -> 100
             candidateArtists.any { cand -> sourceArtists.any { src -> cand.contains(src) || src.contains(cand) } } -> 70
-            else -> -35
+            else -> -20
+        }
+    }
+
+    if (sourceAlbum.isNotBlank() && candidateAlbum.isNotBlank()) {
+        score += when {
+            sourceAlbum == candidateAlbum -> 25
+            sourceAlbum.contains(candidateAlbum) || candidateAlbum.contains(sourceAlbum) -> 15
+            else -> 0
         }
     }
 
@@ -329,7 +363,7 @@ private fun youtubeSongMatchScore(
             diff <= 5 -> 20
             diff <= 10 -> 10
             diff <= 20 -> 0
-            else -> -25
+            else -> -20
         }
     }
 
