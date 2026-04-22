@@ -19,9 +19,9 @@ import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .callTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(7, TimeUnit.SECONDS)
+        .callTimeout(8, TimeUnit.SECONDS)
         .build()
 
     private val baseUrls = listOf(
@@ -47,9 +47,9 @@ object SaavnAudioResolver {
     private val searchCache = linkedMapOf<String, List<Candidate>>()
     private val songCache = linkedMapOf<String, Candidate?>()
 
-    private const val RESOLVE_QUERY_LIMIT = 5
-    private const val RESOLVE_RESULT_LIMIT = 8
-    private const val EARLY_ACCEPT_SCORE = 118
+    private const val RESOLVE_QUERY_LIMIT = 4
+    private const val RESOLVE_RESULT_LIMIT = 6
+    private const val EARLY_ACCEPT_SCORE = 116
 
     private fun <T> putBoundedCache(cache: LinkedHashMap<String, T>, key: String, value: T, maxSize: Int) {
         if (!cache.containsKey(key) && cache.size >= maxSize) {
@@ -190,7 +190,7 @@ object SaavnAudioResolver {
         candidate: Candidate,
         audioQuality: AudioQuality,
     ): ResolvedStream? {
-        val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
+        val hydrated = if (candidate.downloadLinks.isNotEmpty()) {
             candidate
         } else {
             fetchSong(candidate.id) ?: candidate
@@ -423,22 +423,20 @@ object SaavnAudioResolver {
         searchCache[query]?.let { return it }
 
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        val paramVariants = listOf(
-            "query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            "q=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            "query=$encoded",
+        val orderedRequests = listOf(
+            baseUrls[0].trimEnd('/') + searchPaths[0] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
+            baseUrls[0].trimEnd('/') + searchPaths[1] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
+            baseUrls[0].trimEnd('/') + searchPaths[0] + "?q=$encoded&limit=$RESOLVE_RESULT_LIMIT",
+            baseUrls[1].trimEnd('/') + searchPaths[0] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
+            baseUrls[1].trimEnd('/') + searchPaths[1] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
         )
         val all = linkedMapOf<String, Candidate>()
 
-        outer@ for (base in baseUrls) {
-            for (path in searchPaths) {
-                for (params in paramVariants) {
-                    val url = base.trimEnd('/') + path + "?" + params
-                    val json = fetchJson(url) ?: continue
-                    parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                    if (all.size >= RESOLVE_RESULT_LIMIT) break@outer
-                }
-            }
+        for (url in orderedRequests) {
+            val json = fetchJson(url) ?: continue
+            parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
+            if (all.size >= RESOLVE_RESULT_LIMIT) break
+            if (all.size >= 3) break
         }
 
         val results = all.values.take(RESOLVE_RESULT_LIMIT)
