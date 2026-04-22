@@ -2863,15 +2863,19 @@ class MusicService :
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
 
         retryJob?.cancel()
         retryJob = scope.launch {
-            if (alreadyEscalated) {
-                Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
-                handleFinalFailure()
-                return@launch
-            }
+            performAggressiveCacheClear(mediaId)
+            delay(RETRY_DELAY_MS * 2)
+
+            val currentPosition = player.currentPosition
+            val currentIndex = player.currentMediaItemIndex
+            player.seekTo(currentIndex, currentPosition)
+            player.prepare()
+            Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
+        }
+    }
 
             performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS * 2)
@@ -2886,12 +2890,26 @@ class MusicService :
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
 
         songUrlCache.remove(mediaId)
         try {
             YTPlayerUtils.forceRefreshForVideo(mediaId)
         } catch (e: Exception) {
+            Log.e("MusicService", "Failed to clear decryption caches", e)
+        }
+
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            delay(RETRY_DELAY_MS)
+
+            val currentPosition = player.currentPosition
+            val currentIndex = player.currentMediaItemIndex
+            player.seekTo(currentIndex, currentPosition)
+            player.prepare()
+            player.play()
+            Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
+        }
+    } catch (e: Exception) {
             Log.e("MusicService", "Failed to clear decryption caches", e)
         }
 
