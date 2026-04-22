@@ -1,8 +1,7 @@
 package iad1tya.echo.music.playback
 
 import android.content.Context
-import android.net.ConnectivityManager
-import android.os.PowerManager
+import android.os.Handler
 import android.util.Log
 import androidx.media3.common.Player
 import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
@@ -19,7 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import android.os.Handler
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
@@ -30,10 +28,6 @@ class QueueAudioPrefetchManager(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var prefetchJob: Job? = null
-    private val connectivityManager: ConnectivityManager? =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    private val powerManager: PowerManager? =
-        context.getSystemService(Context.POWER_SERVICE) as? PowerManager
 
     fun onQueuePositionChanged(player: Player) {
         prefetchJob?.cancel()
@@ -73,37 +67,6 @@ class QueueAudioPrefetchManager(
             }
         }
     }
-
-    private fun resolveEffectivePrefetchCount(player: Player, requestedCount: Int): Int {
-        var count = requestedCount.coerceIn(1, MAX_PREFETCH_COUNT)
-
-        if (isBatterySaverEnabled()) {
-            count = minOf(count, 1)
-        }
-
-        if (isOnMeteredConnection()) {
-            count = minOf(count, 1)
-        }
-
-        if (player.shuffleModeEnabled) {
-            return count
-        }
-
-        return minOf(count, 1)
-    }
-
-    private fun resolvePrefetchBytesForIndex(index: Int): Long {
-        return when {
-            isBatterySaverEnabled() -> BATTERY_SAVER_PREFETCH_BYTES
-            isOnMeteredConnection() -> METERED_PREFETCH_BYTES
-            index == 0 -> PRIMARY_PREFETCH_BYTES
-            else -> SECONDARY_PREFETCH_BYTES
-        }
-    }
-
-    private fun isBatterySaverEnabled(): Boolean = powerManager?.isPowerSaveMode == true
-
-    private fun isOnMeteredConnection(): Boolean = connectivityManager?.isActiveNetworkMetered == true
 
     private data class PrefetchTarget(
         val mediaId: String,
@@ -186,12 +149,9 @@ class QueueAudioPrefetchManager(
 
     private companion object {
         private const val TAG = "QueueAudioPrefetch"
-        private const val DEFAULT_PREFETCH_COUNT = 2
+        private const val DEFAULT_PREFETCH_COUNT = 1
         private const val MAX_PREFETCH_COUNT = 2
-        private const val PRIMARY_PREFETCH_BYTES = 4L * 1024L * 1024L
-        private const val SECONDARY_PREFETCH_BYTES = 2L * 1024L * 1024L
-        private const val METERED_PREFETCH_BYTES = 1536L * 1024L
-        private const val BATTERY_SAVER_PREFETCH_BYTES = 1024L * 1024L
-        private const val PREFETCH_DELAY_MS = 300L
+        private const val PREFETCH_BYTES = 2L * 1024L * 1024L
+        private const val PREFETCH_DELAY_MS = 1200L
     }
 }
