@@ -19,7 +19,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import android.os.Handler
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class QueueAudioPrefetchManager(
     private val context: Context,
@@ -38,44 +40,35 @@ class QueueAudioPrefetchManager(
 
         prefetchJob = scope.launch {
             val preferences = context.dataStore.data.first()
-            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: true
+            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: false
             if (!enabled) return@launch
-            if (!player.isPlaying) return@launch
+
+            val prefetchCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
+                .coerceIn(1, MAX_PREFETCH_COUNT)
 
             if (!networkConnectivity.isCurrentlyConnected()) {
                 Log.d(TAG, "Network unavailable, skipping queue audio prefetch")
                 return@launch
             }
 
-            val requestedCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
-                .coerceIn(1, MAX_PREFETCH_COUNT)
-            val effectiveCount = resolveEffectivePrefetchCount(player, requestedCount)
-            if (effectiveCount <= 0) return@launch
+            val snapshot = capturePrefetchSnapshot(player, prefetchCount)
+            if (!snapshot.shouldPrefetch) return@launch
 
-            val nextTargets = withContext(Dispatchers.Main.immediate) {
-                getNextMediaTargets(player, effectiveCount)
-            }
+            val nextTargets = snapshot.targets
             if (nextTargets.isEmpty()) return@launch
 
             nextTargets.forEachIndexed { index, target ->
                 if (!isActive) return@launch
-                val prefetchBytes = resolvePrefetchBytesForIndex(index)
-                if (prefetchBytes <= 0L) return@forEachIndexed
-
                 runCatching {
                     downloadUtil.prefetchToPlayerCache(
                         mediaId = target.mediaId,
                         metadata = target.metadata,
-                        maxBytes = prefetchBytes,
+                        maxBytes = PREFETCH_BYTES,
                     )
                 }.onFailure {
                     Log.w(TAG, "Prefetch failed for ${target.mediaId}", it)
                 }
-
-                Log.d(
-                    TAG,
-                    "Prefetch scheduled ${index + 1}/${nextTargets.size} for ${target.mediaId} (${prefetchBytes / 1024 / 1024} MiB)"
-                )
+                Log.d(TAG, "Prefetch scheduled ${index + 1}/${nextTargets.size} for ${target.mediaId}")
                 delay(PREFETCH_DELAY_MS)
             }
         }
@@ -116,6 +109,38 @@ class QueueAudioPrefetchManager(
         val mediaId: String,
         val metadata: iad1tya.echo.music.models.MediaMetadata?,
     )
+
+    private data class PrefetchSnapshot(
+        val shouldPrefetch: Boolean,
+        val targets: List<PrefetchTarget>,
+    )
+
+    private suspend fun capturePrefetchSnapshot(player: Player, count: Int): PrefetchSnapshot =
+        suspendCancellableCoroutine { continuation ->
+            val handler = Handler(player.applicationLooper)
+            handler.post {
+                if (!continuation.isActive) return@post
+                val snapshot = runCatching {
+                    val shouldPrefetch = player.isPlaying
+                    val targets = if (shouldPrefetch) {
+                        getNextMediaTargets(player, count)
+                    } else {
+                        emptyList()
+                    }
+                    PrefetchSnapshot(
+                        shouldPrefetch = shouldPrefetch,
+                        targets = targets,
+                    )
+                }.getOrElse {
+                    Log.w(TAG, "Failed to capture player snapshot for prefetch", it)
+                    PrefetchSnapshot(
+                        shouldPrefetch = false,
+                        targets = emptyList(),
+                    )
+                }
+                continuation.resume(snapshot)
+            }
+        }
 
     private fun getNextMediaTargets(player: Player, count: Int): List<PrefetchTarget> {
         if (count <= 0 || player.currentMediaItemIndex == -1 || player.mediaItemCount <= 1) {
