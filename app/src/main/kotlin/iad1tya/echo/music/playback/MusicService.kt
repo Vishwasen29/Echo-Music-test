@@ -3586,8 +3586,6 @@ class MusicService :
         else -> "mp3"
     }
 
-    private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
-
     private fun peekNextMediaId(): String? {
         val timeline = player.currentTimeline
         if (timeline.isEmpty || player.currentMediaItemIndex == -1) return null
@@ -3622,6 +3620,7 @@ class MusicService :
         }
     }
 
+    private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
         if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) {
             if (isYoutubeFallbackCoolingDown(mediaId)) {
                 Log.d("MusicService", "Skipping JioSaavn for $mediaId because YouTube fallback cooldown is active")
@@ -3747,12 +3746,6 @@ class MusicService :
     }
 
     suspend fun getStreamUrl(mediaId: String): String? {
-                }.onFailure {
-                    Log.d("MusicService", "Next track URL warmup failed for $nextMediaId: ${it.message}")
-                }
-        }
-    }
-
         val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
         val preferSaavnBeforeYoutubeCache =
             !mediaId.startsWith("saavn:") &&
