@@ -104,14 +104,7 @@ import iad1tya.echo.music.constants.DiscordStatusKey
 import iad1tya.echo.music.constants.DiscordTokenKey
 import iad1tya.echo.music.constants.DiscordUseDetailsKey
 import iad1tya.echo.music.constants.EnableDiscordRPCKey
-import iad1tya.echo.music.constants.EnableLastFMScrobblingKey
-import iad1tya.echo.music.constants.LastFMUseNowPlaying
-import iad1tya.echo.music.constants.ScrobbleDelayPercentKey
-import iad1tya.echo.music.constants.ScrobbleDelaySecondsKey
-import iad1tya.echo.music.constants.ScrobbleMinSongDurationKey
-import com.metrolist.lastfm.LastFM
 import iad1tya.echo.music.utils.DiscordRPC
-import iad1tya.echo.music.utils.ScrobbleManager
 import android.os.Handler
 import android.os.Looper
 import iad1tya.echo.music.constants.DisableLoadMoreWhenRepeatAllKey
@@ -238,6 +231,8 @@ import java.io.ObjectOutputStream
 import java.time.LocalDateTime
 import javax.inject.Inject
 import kotlin.time.Duration.Companion.seconds
+import java.net.Inet4Address
+import java.net.InetAddress
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 @AndroidEntryPoint
@@ -279,7 +274,6 @@ class MusicService :
     private var lyricsPreloadManager: LyricsPreloadManager? = null
     // CHATGPT_ALL_IN_ONE_HOTFIX
     private var queueAudioPrefetchManager: QueueAudioPrefetchManager? = null
-    private var nextTrackWarmupJob: Job? = null
 
     private val audioQuality by enumPreference(
         this,
@@ -289,7 +283,7 @@ class MusicService :
     private val playerStreamClient by enumPreference(
         this,
         PlayerStreamClientKey,
-        PlayerStreamClient.ANDROID_VR,
+        PlayerStreamClient.ANDROID,
     )
     private val audioEngineMode by enumPreference(
         this,
@@ -312,7 +306,12 @@ class MusicService :
         }
 
     private val forcedYoutubeFallbackIds = mutableSetOf<String>()
+    private val recentYoutubeHttpFailures = mutableMapOf<String, Long>()
+    private val youtubeHttpFailureCooldownMs = 60_000L
 
+    private val youtubeFallbackCooldownUntilMs = mutableMapOf<String, Long>()
+    private val saavnRetryCount = mutableMapOf<String, Int>()
+    private val maxSaavnRetryAttempts = 2
 
     // CHATGPT_SAAVN_TRACE_START
     data class PlaybackSourceTrace(
@@ -326,15 +325,102 @@ class MusicService :
     // CHATGPT_SAAVN_TRACE_END
 
     private var currentQueueTotalCount: Int? = null
+    private fun shouldThrottleYoutubeRecovery(mediaId: String): Boolean {
+        val last = recentYoutubeHttpFailures[mediaId] ?: return false
+        return System.currentTimeMillis() - last < youtubeHttpFailureCooldownMs
+    }
 
+    private fun markYoutubeHttpFailure(mediaId: String) {
+        recentYoutubeHttpFailures[mediaId] = System.currentTimeMillis()
+    }
+
+    private fun clearYoutubeHttpFailure(mediaId: String) {
+        recentYoutubeHttpFailures.remove(mediaId)
+    }
 
     private fun isSaavnBackedTrack(mediaId: String): Boolean {
         val format = runBlocking(Dispatchers.IO) { database.format(mediaId).first() }
         return format?.playbackUrl?.startsWith("saavn://") == true || ((format?.itag ?: 0) < 0)
     }
 
+    private fun rootCause(throwable: Throwable?): Throwable? {
+        var current = throwable
+        while (current?.cause != null && current.cause !== current) {
+            current = current.cause
+        }
+        return current
+    }
+
+    private fun isYoutubeFallbackCoolingDown(mediaId: String): Boolean {
+        return (youtubeFallbackCooldownUntilMs[mediaId] ?: 0L) > System.currentTimeMillis()
+    }
+
+    private fun isYoutubeUnavailableError(error: PlaybackException): Boolean {
+        val messages = listOfNotNull(error.message, error.cause?.message, rootCause(error)?.message)
+        return messages.any { message ->
+            message.contains("video is not available", ignoreCase = true) ||
+                message.contains("video unavailable", ignoreCase = true) ||
+                message.contains("playability status not ok", ignoreCase = true) ||
+                message.contains("unplayable", ignoreCase = true)
+        }
+    }
+
+    private fun shouldRetrySaavnBeforeYoutube(mediaId: String, error: PlaybackException): Boolean {
+        if (!isSaavnBackedTrack(mediaId) || forcedYoutubeFallbackIds.contains(mediaId)) return false
+        val root = rootCause(error)
+        val transientNetworkFailure =
+            root is java.net.UnknownHostException ||
+                root is java.net.ConnectException ||
+                root is java.net.SocketTimeoutException ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                root?.message?.contains("saavncdn", ignoreCase = true) == true
+
+        if (!transientNetworkFailure) return false
+        val retries = saavnRetryCount[mediaId] ?: 0
+        return retries < maxSaavnRetryAttempts
+    }
+
+    private fun markYoutubeFallbackCooldown(mediaId: String, detail: String) {
+        youtubeFallbackCooldownUntilMs[mediaId] = System.currentTimeMillis() + 10 * 60 * 1000L
+        forcedYoutubeFallbackIds.remove(mediaId)
+        songUrlCache.remove(mediaId)
+        updatePlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = "YouTube Music",
+            finalSource = "Unavailable",
+            detail = detail,
+        )
+        Log.d("MusicService", "Cooling down YouTube fallback for $mediaId: $detail")
+    }
+
+    private fun retryCurrentTrackWithSaavn(mediaId: String, detail: String) {
+        saavnRetryCount[mediaId] = (saavnRetryCount[mediaId] ?: 0) + 1
+        forcedYoutubeFallbackIds.remove(mediaId)
+        songUrlCache.remove(mediaId)
+        updatePlaybackSourceTrace(
+            mediaId = mediaId,
+            attemptedSource = "JioSaavn",
+            finalSource = "JioSaavn",
+            detail = detail,
+        )
+        Log.d("MusicService", "Retrying $mediaId with JioSaavn: $detail")
+        val currentIndex = player.currentMediaItemIndex
+        player.stop()
+        if (currentIndex >= 0) {
+            player.seekToDefaultPosition(currentIndex)
+        }
+        player.prepare()
+        player.playWhenReady = true
+    }
+
     private fun retryCurrentTrackWithYoutube(mediaId: String) {
+        if (isYoutubeFallbackCoolingDown(mediaId)) {
+            Log.d("MusicService", "Skipping YouTube fallback for $mediaId because it is cooling down")
+            return
+        }
         forcedYoutubeFallbackIds.add(mediaId)
+        saavnRetryCount.remove(mediaId)
         updatePlaybackSourceTrace(
             mediaId = mediaId,
             attemptedSource = "JioSaavn",
@@ -343,7 +429,6 @@ class MusicService :
         )
         Log.d("MusicService", "Retrying $mediaId with YouTube Music after JioSaavn-backed playback failed")
         songUrlCache.remove(mediaId)
-        performAggressiveCacheClear(mediaId)
         val currentIndex = player.currentMediaItemIndex
         player.stop()
         if (currentIndex >= 0) {
@@ -375,7 +460,11 @@ class MusicService :
     }
 
     private fun markYoutubeResolved(mediaId: String, detail: String) {
+        youtubeFallbackCooldownUntilMs.remove(mediaId)
+        saavnRetryCount.remove(mediaId)
         clearForcedYoutubeFallback(mediaId)
+        youtubeFallbackCooldownUntilMs.remove(mediaId)
+        saavnRetryCount.remove(mediaId)
         val attempted = currentPlaybackSourceTrace.value
             ?.takeIf { it.mediaId == mediaId }
             ?.attemptedSource
@@ -403,7 +492,6 @@ class MusicService :
             }
         }
     }
-
 
     private fun buildResolvedSaavnMetadata(
         mediaId: String,
@@ -503,7 +591,6 @@ class MusicService :
 
     val playerRecommendations = MutableStateFlow<List<PlayerRecommendation>>(emptyList())
 
-
     private var consecutivePlaybackErr = 0
     private var retryJob: Job? = null
 
@@ -538,9 +625,6 @@ class MusicService :
             appWidgetManager.getAppWidgetIds(ComponentName(this, AdaptiveMusicWidgetProvider::class.java)).isNotEmpty()
     }
     // CHATGPT_BATTERY_OPTIMIZATION_PATCH_END
-
-    // Last.fm scrobbling
-    private var scrobbleManager: ScrobbleManager? = null
 
     // Crossfade state
     private var crossfadeEnabled = false
@@ -1049,53 +1133,6 @@ class MusicService :
                 }
             }
 
-        // Last.fm scrobble initialization
-        dataStore.data
-            .map { it[EnableLastFMScrobblingKey] ?: false }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                if (enabled && scrobbleManager == null) {
-                    val delayPercent = dataStore.get(ScrobbleDelayPercentKey, LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT)
-                    val minSongDuration = dataStore.get(ScrobbleMinSongDurationKey, LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION)
-                    val delaySeconds = dataStore.get(ScrobbleDelaySecondsKey, LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS)
-                    scrobbleManager = ScrobbleManager(
-                        scope,
-                        minSongDuration = minSongDuration,
-                        scrobbleDelayPercent = delayPercent,
-                        scrobbleDelaySeconds = delaySeconds
-                    )
-                    scrobbleManager?.useNowPlaying = dataStore.get(LastFMUseNowPlaying, false)
-                } else if (!enabled && scrobbleManager != null) {
-                    scrobbleManager?.destroy()
-                    scrobbleManager = null
-                }
-            }
-
-        dataStore.data
-            .map { it[LastFMUseNowPlaying] ?: false }
-            .distinctUntilChanged()
-            .collectLatest(scope) {
-                scrobbleManager?.useNowPlaying = it
-            }
-
-        dataStore.data
-            .map { prefs ->
-                Triple(
-                    prefs[ScrobbleDelayPercentKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_PERCENT,
-                    prefs[ScrobbleMinSongDurationKey] ?: LastFM.DEFAULT_SCROBBLE_MIN_SONG_DURATION,
-                    prefs[ScrobbleDelaySecondsKey] ?: LastFM.DEFAULT_SCROBBLE_DELAY_SECONDS
-                )
-            }
-            .distinctUntilChanged()
-            .collect(scope) { (delayPercent, minSongDuration, delaySeconds) ->
-                scrobbleManager?.let {
-                    it.scrobbleDelayPercent = delayPercent
-                    it.minSongDuration = minSongDuration
-                    it.scrobbleDelaySeconds = delaySeconds
-                }
-            }
-
         // Watch Discord customization preferences
         dataStore.data
             .map {
@@ -1124,7 +1161,7 @@ class MusicService :
         // CHATGPT_BATTERY_OPTIMIZATION_PATCH: keep periodic persistence, but avoid frequent disk writes during playback.
         scope.launch {
             while (isActive) {
-                delay(if (player.isPlaying) 120.seconds else 180.seconds)
+                delay(if (player.isPlaying) 180.seconds else 300.seconds)
                 if (dataStore.get(PersistentQueueKey, true)) {
                     saveQueueToDisk()
                 }
@@ -1135,7 +1172,7 @@ class MusicService :
         widgetProgressJob = scope.launch {
             while (isActive) {
                 if (!hasAnyPinnedWidgets()) {
-                    delay(30000L)
+                    delay(60000L)
                     continue
                 }
                 if (::player.isInitialized && player.currentMediaItem != null) {
@@ -1171,7 +1208,7 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                 }
-                delay(if (player.isPlaying) 8000L else 20000L)
+                delay(if (player.isPlaying) 15000L else 60000L)
             }
         }
         } catch (e: Exception) {
@@ -1309,7 +1346,6 @@ class MusicService :
     }
     
 
-
     private fun waitOnNetworkError() {
         waitingForNetworkConnection.value = true
     }
@@ -1432,7 +1468,6 @@ class MusicService :
         }
     }
 
-
     private fun normalizeRecommendationKey(title: String, artists: String): String {
         return (title + " " + artists)
             .lowercase()
@@ -1543,17 +1578,7 @@ class MusicService :
     }
 
     private suspend fun refreshPlayerRecommendations(mediaId: String) {
-        val youtube = fetchYouTubeRecommendations(mediaId)
-        val saavn = fetchSaavnRecommendations(mediaId)
-
-        val merged = linkedMapOf<String, PlayerRecommendation>()
-        (youtube + saavn).forEach { recommendation ->
-            merged.putIfAbsent(
-                normalizeRecommendationKey(recommendation.title, recommendation.artistsLine),
-                recommendation,
-            )
-        }
-        playerRecommendations.value = merged.values.take(10).toList()
+        playerRecommendations.value = emptyList()
     }
 
     suspend fun addRecommendationToYoutubePlaylist(
@@ -1563,7 +1588,6 @@ class MusicService :
         YouTube.addToPlaylist(playlistId, matchedYoutubeId).getOrThrow()
         matchedYoutubeId
     }
-
 
     private fun normalizeSaavnSearchText(value: String): String {
         return value
@@ -2039,7 +2063,6 @@ class MusicService :
         }
     }
 
-
     private fun releaseLoudnessEnhancer() {
         try {
             loudnessEnhancer?.release()
@@ -2337,10 +2360,7 @@ class MusicService :
             startManualSkipCrossfadeIn()
         }
 
-        // Last.fm scrobble on track change
-        scrobbleManager?.onSongStop()
         if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-            scrobbleManager?.onSongStart(player.currentMetadata, duration = player.duration)
         }
 
         // TTS Song Announcement
@@ -2386,20 +2406,9 @@ class MusicService :
         
         // Update widget
         updateWidget()
-        mediaItem?.mediaId?.let { recommendationMediaId ->
-            scope.launch(SilentHandler) {
-                refreshPlayerRecommendations(recommendationMediaId)
-            }
-        }
-
-        val queue = player.mediaItems.mapNotNull { it.metadata }
-        if (queue.isNotEmpty()) {
-            lyricsPreloadManager?.onSongChanged(player.currentMediaItemIndex, queue)
-        }
-
-        // CHATGPT_QUEUE_PREFETCH_PATCH
+        // CHATGPT_REFINED_RECOMMENDATIONS_AND_LYRICS_DISABLED
+        playerRecommendations.value = emptyList()
         queueAudioPrefetchManager?.onQueuePositionChanged(player)
-        scheduleNextTrackUrlWarmup()
 
         // Auto load more songs
         if (dataStore.get(AutoLoadMoreKey, true) &&
@@ -2434,8 +2443,7 @@ class MusicService :
         }
 
         if (playbackState == Player.STATE_IDLE || playbackState == Player.STATE_ENDED) {
-            scrobbleManager?.onSongStop()
-        }
+            }
         
         // Reset consecutive error counter when playback is successful
         if (playbackState == Player.STATE_READY) {
@@ -2511,9 +2519,7 @@ class MusicService :
             currentMediaMetadata.value = player.currentMetadata
         }
 
-        // Last.fm scrobble state tracking
         if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
-            scrobbleManager?.onPlayerStateChanged(player.isPlaying, player.currentMetadata, duration = player.duration)
         }
 
         // Discord RPC updates
@@ -2617,7 +2623,6 @@ class MusicService :
     // onDeviceVolumeChanged is intentionally NOT used for pause-on-mute because it only
     // fires for volume changes made through ExoPlayer's own APIs, not hardware volume keys.
     // The ContentObserver registered in onCreate is the reliable replacement.
-
     override fun onPlayerError(error: PlaybackException) {
         super.onPlayerError(error)
         Log.e("MusicService", "Playback error: ${error.message}", error)
@@ -2625,24 +2630,42 @@ class MusicService :
         try {
             val mediaId = player.currentMediaItem?.mediaId
 
-            // Check if this song has failed too many times
             if (mediaId != null && hasExceededRetryLimit(mediaId)) {
                 markSongAsFailed(mediaId)
                 handleFinalFailure()
                 return
             }
 
-            if (mediaId != null && isSaavnBackedTrack(mediaId) && !forcedYoutubeFallbackIds.contains(mediaId)) {
+            if (mediaId != null && forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeUnavailableError(error)) {
+                markYoutubeFallbackCooldown(mediaId, "YouTube fallback video is unavailable")
+                if (dataStore.get(AutoSkipNextOnErrorKey, false)) {
+                    skipOnError()
+                } else {
+                    stopOnError()
+                }
+                return
+            }
+
+            if (mediaId != null && shouldRetrySaavnBeforeYoutube(mediaId, error)) {
+                retryCurrentTrackWithSaavn(mediaId, "Transient JioSaavn network/CDN failure")
+                return
+            }
+
+            if (
+                mediaId != null &&
+                isSaavnBackedTrack(mediaId) &&
+                !forcedYoutubeFallbackIds.contains(mediaId) &&
+                !isNetworkRelatedError(error) &&
+                !isYoutubeFallbackCoolingDown(mediaId)
+            ) {
                 retryCurrentTrackWithYoutube(mediaId)
                 return
             }
 
-            // Aggressive cache clearing for all playback errors
             if (mediaId != null) {
                 performAggressiveCacheClear(mediaId)
             }
 
-            // Handle specific error types with targeted strategies
             when {
                 isAudioRendererError(error) -> {
                     handleAudioRendererError(mediaId)
@@ -2666,7 +2689,6 @@ class MusicService :
                 }
             }
 
-            // IO_UNSPECIFIED and IO_BAD_HTTP_STATUS fallback
             if (error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
                 error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS
             ) {
@@ -2674,7 +2696,6 @@ class MusicService :
                 return
             }
 
-            // Final fallback
             if (dataStore.get(AutoSkipNextOnErrorKey, false)) {
                 skipOnError()
             } else {
@@ -2839,24 +2860,27 @@ class MusicService :
             Log.d("MusicService", "Retrying playback for $mediaId after 416 error (from position 0)")
         }
     }
-
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-
-        retryJob?.cancel()
+        val alreadyEscalated = retryJob?.cancel()
         retryJob = scope.launch {
+            if (alreadyEscalated) {
+                Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
+                handleFinalFailure()
+                return@launch
+            }
+
             performAggressiveCacheClear(mediaId)
-            delay(RETRY_DELAY_MS * 2) // Extra delay for page reload errors
+            delay(RETRY_DELAY_MS * 2)
 
             val currentPosition = player.currentPosition
             val currentIndex = player.currentMediaItemIndex
             player.seekTo(currentIndex, currentPosition)
             player.prepare()
-            Log.d("MusicService", "Retrying playback for $mediaId after page reload error")
+            Log.d("MusicService", "Retrying playback for $mediaId after page reload error with background video fallback enabled")
         }
     }
-
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
@@ -2879,6 +2903,27 @@ class MusicService :
             player.play()
             Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
         }
+    } catch (e: Exception) {
+            Log.e("MusicService", "Failed to clear decryption caches", e)
+        }
+
+        retryJob?.cancel()
+        retryJob = scope.launch {
+            if (alreadyEscalated) {
+                Log.d("MusicService", "Repeated 403 for $mediaId with background video fallback already enabled; stopping retry storm")
+                handleFinalFailure()
+                return@launch
+            }
+
+            delay(RETRY_DELAY_MS)
+
+            val currentPosition = player.currentPosition
+            val currentIndex = player.currentMediaItemIndex
+            player.seekTo(currentIndex, currentPosition)
+            player.prepare()
+            player.play()
+            Log.d("MusicService", "Retrying playback for $mediaId after 403 error with background video fallback enabled")
+        }
     }
 
     private fun handleGenericIOError(mediaId: String?) {
@@ -2896,6 +2941,7 @@ class MusicService :
             player.prepare()
             Log.d("MusicService", "Retrying playback for $mediaId after generic IO error")
         }
+    }
     }
 
     private fun handleFinalFailure() {
@@ -2987,9 +3033,7 @@ class MusicService :
 
             // Prefer JioSaavn before reusing a cached YouTube URL.
             val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
-            val preferSaavnBeforeYoutubeCache =
-                !mediaId.startsWith("saavn:") &&
-                    !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
+            val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
             if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 return@Factory dataSpec.withUri(cachedUrlEntry.first.toUri())
@@ -3005,6 +3049,14 @@ class MusicService :
             cachedUrlEntry?.let {
                 scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
                 return@Factory dataSpec.withUri(it.first.toUri())
+            }
+
+            if (isSaavnBackedTrack(mediaId) && isYoutubeFallbackCoolingDown(mediaId)) {
+                throw PlaybackException(
+                    "Skipping YouTube fallback temporarily after the previous fallback video was unavailable",
+                    null,
+                    PlaybackException.ERROR_CODE_REMOTE_ERROR
+                )
             }
 
             // Need to fetch a new URL - either first time or URL expired
@@ -3484,10 +3536,6 @@ class MusicService :
         hapticsPollingJob?.cancel()
         hapticsManager.stop()
 
-        // Last.fm cleanup
-        scrobbleManager?.destroy()
-        scrobbleManager = null
-
         // Discord cleanup
         if (discordRpc?.isRpcRunning() == true) {
             discordRpc?.closeRPC()
@@ -3524,8 +3572,6 @@ class MusicService :
         super.onDestroy()
     }
 
-
-
     private data class ExternalResolvedUrl(
         val url: String,
         val expiresAtMs: Long,
@@ -3549,19 +3595,14 @@ class MusicService :
 
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
         if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) {
-            if (isYoutubeFallbackCoolingDown(mediaId)) {
-                Log.d("MusicService", "Skipping JioSaavn for $mediaId because YouTube fallback cooldown is active")
-                updatePlaybackSourceTrace(
-                    mediaId = mediaId,
-                    attemptedSource = "JioSaavn",
-                    finalSource = "YouTube Music",
-                    detail = "YouTube fallback cooldown is active for this track",
-                )
-                return null
-            } else {
-                Log.d("MusicService", "Clearing stale forced YouTube fallback for $mediaId before retrying JioSaavn")
-                forcedYoutubeFallbackIds.remove(mediaId)
-            }
+            Log.d("MusicService", "Skipping JioSaavn for $mediaId because forced YouTube fallback is active")
+            updatePlaybackSourceTrace(
+                mediaId = mediaId,
+                attemptedSource = "JioSaavn",
+                finalSource = "YouTube Music",
+                detail = "Forced YouTube fallback is active for this track",
+            )
+            return null
         }
 
         if (mediaId.startsWith("saavn:")) {
@@ -3672,45 +3713,9 @@ class MusicService :
         )
     }
 
-    private fun peekNextMediaId(): String? {
-        val timeline = player.currentTimeline
-        if (timeline.isEmpty || player.currentMediaItemIndex == -1) return null
-        val nextIndex = timeline.getNextWindowIndex(
-            player.currentMediaItemIndex,
-            player.repeatMode,
-            player.shuffleModeEnabled,
-        )
-        if (nextIndex == -1 || nextIndex == player.currentMediaItemIndex) return null
-        return player.getMediaItemAt(nextIndex).mediaId.takeIf { it.isNotBlank() }
-    }
-
-    private fun scheduleNextTrackUrlWarmup() {
-        nextTrackWarmupJob?.cancel()
-        if (!player.playWhenReady) return
-
-        nextTrackWarmupJob = scope.launch(Dispatchers.IO) {
-            delay(400L)
-
-            val nextMediaId = withContext(Dispatchers.Main.immediate) { peekNextMediaId() } ?: return@launch
-            val cached = songUrlCache[nextMediaId]?.takeIf { it.second > System.currentTimeMillis() }
-            if (cached != null) return@launch
-
-            runCatching { getStreamUrl(nextMediaId) }
-                .onSuccess { warmed ->
-                    if (warmed != null) {
-                        Log.d("MusicService", "Warmed next track URL for $nextMediaId")
-                    }
-                }.onFailure {
-                    Log.d("MusicService", "Next track URL warmup failed for $nextMediaId: ${it.message}")
-                }
-        }
-    }
-
     suspend fun getStreamUrl(mediaId: String): String? {
         val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
-            val preferSaavnBeforeYoutubeCache =
-                !mediaId.startsWith("saavn:") &&
-                    !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
+        val preferSaavnBeforeYoutubeCache = !mediaId.startsWith("saavn:") && !forcedYoutubeFallbackIds.contains(mediaId)
         if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
             return cachedUrlEntry.first
         }
@@ -3724,6 +3729,10 @@ class MusicService :
 
             cachedUrlEntry?.let {
                 return it.first
+            }
+
+            if (isSaavnBackedTrack(mediaId) && isYoutubeFallbackCoolingDown(mediaId)) {
+                return null
             }
 
             val isUploadedSong = database.song(mediaId).first()?.song?.isUploaded == true
@@ -3743,6 +3752,7 @@ class MusicService :
             if (streamUrl != null) {
                 val expiry = System.currentTimeMillis() + (playbackData.streamExpiresInSeconds * 1000L)
                 songUrlCache[mediaId] = streamUrl to expiry
+                clearYoutubeHttpFailure(mediaId)
                 markYoutubeResolved(mediaId, "Using YouTube Music stream after JioSaavn lookup did not win")
                 streamUrl
             } else {
@@ -3753,7 +3763,6 @@ class MusicService :
             null
         }
     }
-
 
     override fun onBind(intent: Intent?) = super.onBind(intent) ?: binder
 
@@ -3792,6 +3801,7 @@ class MusicService :
         currentTrackCounterCompact()?.let { "$base • $it" } ?: base
 
     private fun updateWidget() {
+        if (!hasAnyPinnedWidgets()) return
         val metadata = player.currentMetadata
         val safeDuration = when {
             player.duration > 0L && player.duration != C.TIME_UNSET -> player.duration
@@ -3838,7 +3848,6 @@ class MusicService :
             )
         }
     }
-
 
     inner class MusicBinder : Binder() {
         val service: MusicService
