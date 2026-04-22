@@ -2877,16 +2877,6 @@ class MusicService :
         }
     }
 
-            performAggressiveCacheClear(mediaId)
-            delay(RETRY_DELAY_MS * 2)
-
-            val currentPosition = player.currentPosition
-            val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, currentPosition)
-            player.prepare()
-            Log.d("MusicService", "Retrying playback for $mediaId after page reload error with background video fallback enabled")
-        }
-    }
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
@@ -2908,27 +2898,6 @@ class MusicService :
             player.prepare()
             player.play()
             Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
-        }
-    } catch (e: Exception) {
-            Log.e("MusicService", "Failed to clear decryption caches", e)
-        }
-
-        retryJob?.cancel()
-        retryJob = scope.launch {
-            if (alreadyEscalated) {
-                Log.d("MusicService", "Repeated 403 for $mediaId with background video fallback already enabled; stopping retry storm")
-                handleFinalFailure()
-                return@launch
-            }
-
-            delay(RETRY_DELAY_MS)
-
-            val currentPosition = player.currentPosition
-            val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, currentPosition)
-            player.prepare()
-            player.play()
-            Log.d("MusicService", "Retrying playback for $mediaId after 403 error with background video fallback enabled")
         }
     }
 
@@ -2960,6 +2929,7 @@ class MusicService :
     }
 
     private fun createCacheDataSource(): CacheDataSource.Factory =
+
         CacheDataSource
             .Factory()
             .setCache(downloadCache)
