@@ -323,10 +323,10 @@ object SaavnAudioResolver {
         add(strippedTitle, primaryArtist, secondaryArtist)
         add(title, album, primaryArtist)
         add(strippedTitle, album, primaryArtist)
-        add(title, album)
-        add(strippedTitle, album)
         add(title)
         add(strippedTitle)
+        add(title, album)
+        add(strippedTitle, album)
 
         if (primaryArtist.isNotBlank()) {
             add(title, secondaryArtist)
@@ -340,37 +340,24 @@ object SaavnAudioResolver {
         searchCache[query]?.let { return it }
 
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        val primaryParams = listOf(
+        val paramVariants = listOf(
             "query=$encoded&limit=12",
             "q=$encoded&limit=12",
-        )
-        val fallbackParams = listOf(
             "query=$encoded",
             "q=$encoded",
         )
-
-        fun collect(paramsList: List<String>, stopAfter: Int): List<Candidate> {
-            val all = linkedMapOf<String, Candidate>()
-            for (base in baseUrls) {
-                for (path in searchPaths) {
-                    for (params in paramsList) {
-                        val url = base.trimEnd('/') + path + "?" + params
-                        val json = fetchJson(url) ?: continue
-                        parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                        if (all.size >= stopAfter) return all.values.toList()
-                    }
+        val all = linkedMapOf<String, Candidate>()
+        for (base in baseUrls) {
+            for (path in searchPaths) {
+                for (params in paramVariants) {
+                    val url = base.trimEnd('/') + path + "?" + params
+                    val json = fetchJson(url) ?: continue
+                    parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
+                    if (all.size >= 8) break
                 }
             }
-            return all.values.toList()
         }
-
-        val primary = collect(primaryParams, stopAfter = 6)
-        val results = if (primary.isNotEmpty()) {
-            primary
-        } else {
-            collect(primaryParams + fallbackParams, stopAfter = 4)
-        }
-
+        val results = all.values.toList()
         putBoundedCache(searchCache, query, results, maxSize = 64)
         return results
     }
@@ -383,10 +370,9 @@ object SaavnAudioResolver {
             for (template in detailPaths) {
                 val url = base.trimEnd('/') + template.format(encodedId)
                 val json = fetchJson(url) ?: continue
-                val candidate = parseCandidates(json).firstOrNull()
-                if (candidate != null) {
-                    putBoundedCache(songCache, songId, candidate, maxSize = 128)
-                    return candidate
+                parseCandidates(json).firstOrNull()?.let {
+                    putBoundedCache(songCache, songId, it, maxSize = 128)
+                    return it
                 }
             }
         }

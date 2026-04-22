@@ -283,7 +283,7 @@ class MusicService :
     private val playerStreamClient by enumPreference(
         this,
         PlayerStreamClientKey,
-        PlayerStreamClient.ANDROID_VR,
+        PlayerStreamClient.ANDROID,
     )
     private val audioEngineMode by enumPreference(
         this,
@@ -312,7 +312,6 @@ class MusicService :
     private val youtubeFallbackCooldownUntilMs = mutableMapOf<String, Long>()
     private val saavnRetryCount = mutableMapOf<String, Int>()
     private val maxSaavnRetryAttempts = 2
-    private var nextTrackWarmupJob: Job? = null
 
     // CHATGPT_SAAVN_TRACE_START
     data class PlaybackSourceTrace(
@@ -2410,7 +2409,6 @@ class MusicService :
         // CHATGPT_REFINED_RECOMMENDATIONS_AND_LYRICS_DISABLED
         playerRecommendations.value = emptyList()
         queueAudioPrefetchManager?.onQueuePositionChanged(player)
-        scheduleNextTrackUrlWarmup()
 
         // Auto load more songs
         if (dataStore.get(AutoLoadMoreKey, true) &&
@@ -3586,40 +3584,6 @@ class MusicService :
         else -> "mp3"
     }
 
-    private fun peekNextMediaId(): String? {
-        val timeline = player.currentTimeline
-        if (timeline.isEmpty || player.currentMediaItemIndex == -1) return null
-        val nextIndex = timeline.getNextWindowIndex(
-            player.currentMediaItemIndex,
-            player.repeatMode,
-            player.shuffleModeEnabled,
-        )
-        if (nextIndex == -1 || nextIndex == player.currentMediaItemIndex) return null
-        return player.getMediaItemAt(nextIndex).mediaId.takeIf { it.isNotBlank() }
-    }
-
-    private fun scheduleNextTrackUrlWarmup() {
-        nextTrackWarmupJob?.cancel()
-        if (!player.playWhenReady) return
-
-        nextTrackWarmupJob = scope.launch(Dispatchers.IO) {
-            delay(350L)
-
-            val nextMediaId = withContext(Dispatchers.Main.immediate) { peekNextMediaId() } ?: return@launch
-            val cached = songUrlCache[nextMediaId]?.takeIf { it.second > System.currentTimeMillis() }
-            if (cached != null) return@launch
-
-            runCatching { getStreamUrl(nextMediaId) }
-                .onSuccess { warmed ->
-                    if (warmed != null) {
-                        Log.d("MusicService", "Warmed next track URL for $nextMediaId")
-                    }
-                }.onFailure {
-                    Log.d("MusicService", "Next track URL warmup failed for $nextMediaId: ${it.message}")
-                }
-        }
-    }
-
     private suspend fun resolveSaavnUrl(mediaId: String): ExternalResolvedUrl? {
         if (forcedYoutubeFallbackIds.contains(mediaId) && !mediaId.startsWith("saavn:")) {
             if (isYoutubeFallbackCoolingDown(mediaId)) {
@@ -3748,8 +3712,8 @@ class MusicService :
     suspend fun getStreamUrl(mediaId: String): String? {
         val cachedUrlEntry = songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }
         val preferSaavnBeforeYoutubeCache =
-            !mediaId.startsWith("saavn:") &&
-                !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
+                !mediaId.startsWith("saavn:") &&
+                    !(forcedYoutubeFallbackIds.contains(mediaId) && isYoutubeFallbackCoolingDown(mediaId))
         if (cachedUrlEntry != null && (isSaavnBackedTrack(mediaId) || !preferSaavnBeforeYoutubeCache)) {
             return cachedUrlEntry.first
         }
