@@ -54,15 +54,15 @@ object YTPlayerUtils {
      * - Then various client fallbacks
      */
     private val STREAM_FALLBACK_CLIENTS: Array<YouTubeClient> = arrayOf(
-        TVHTML5_SIMPLY_EMBEDDED_PLAYER,  // Try embedded player first for age-restricted content
+        TVHTML5_SIMPLY_EMBEDDED_PLAYER,  // Keep first for age-restricted content
+        ANDROID_VR_1_61_48,
+        ANDROID_VR_NO_AUTH,
+        IOS,
+        MOBILE,
         TVHTML5,
         ANDROID_VR_1_43_32,
-        ANDROID_VR_1_61_48,
         ANDROID_CREATOR,
         IPADOS,
-        ANDROID_VR_NO_AUTH,
-        MOBILE,
-        IOS,
         WEB,
         WEB_CREATOR
     )

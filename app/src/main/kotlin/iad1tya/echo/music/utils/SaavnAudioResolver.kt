@@ -44,6 +44,17 @@ object SaavnAudioResolver {
         "/songs/%s/suggestions",
     )
 
+    private val searchCache = linkedMapOf<String, List<Candidate>>()
+    private val songCache = linkedMapOf<String, Candidate?>()
+
+    private fun <T> putBoundedCache(cache: LinkedHashMap<String, T>, key: String, value: T, maxSize: Int) {
+        if (!cache.containsKey(key) && cache.size >= maxSize) {
+            val oldestKey = cache.keys.firstOrNull()
+            if (oldestKey != null) cache.remove(oldestKey)
+        }
+        cache[key] = value
+    }
+
     private enum class ScriptFamily {
         LATIN,
         DEVANAGARI,
@@ -312,48 +323,75 @@ object SaavnAudioResolver {
         add(strippedTitle, primaryArtist, secondaryArtist)
         add(title, album, primaryArtist)
         add(strippedTitle, album, primaryArtist)
+        add(title, album)
+        add(strippedTitle, album)
+        add(title)
+        add(strippedTitle)
 
-        if (primaryArtist.isBlank()) {
-            add(title)
-            add(strippedTitle)
-        } else {
+        if (primaryArtist.isNotBlank()) {
             add(title, secondaryArtist)
-            add(strippedTitle, album)
+            add(strippedTitle, secondaryArtist)
         }
 
         return queries.toList()
     }
 
     private fun search(query: String): List<Candidate> {
+        searchCache[query]?.let { return it }
+
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        val paramVariants = listOf(
+        val primaryParams = listOf(
             "query=$encoded&limit=12",
             "q=$encoded&limit=12",
+        )
+        val fallbackParams = listOf(
             "query=$encoded",
             "q=$encoded",
         )
-        val all = linkedMapOf<String, Candidate>()
-        for (base in baseUrls) {
-            for (path in searchPaths) {
-                for (params in paramVariants) {
-                    val url = base.trimEnd('/') + path + "?" + params
-                    val json = fetchJson(url) ?: continue
-                    parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
+
+        fun collect(paramsList: List<String>, stopAfter: Int): List<Candidate> {
+            val all = linkedMapOf<String, Candidate>()
+            for (base in baseUrls) {
+                for (path in searchPaths) {
+                    for (params in paramsList) {
+                        val url = base.trimEnd('/') + path + "?" + params
+                        val json = fetchJson(url) ?: continue
+                        parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
+                        if (all.size >= stopAfter) return all.values.toList()
+                    }
                 }
             }
+            return all.values.toList()
         }
-        return all.values.toList()
+
+        val primary = collect(primaryParams, stopAfter = 6)
+        val results = if (primary.isNotEmpty()) {
+            primary
+        } else {
+            collect(primaryParams + fallbackParams, stopAfter = 4)
+        }
+
+        putBoundedCache(searchCache, query, results, maxSize = 64)
+        return results
     }
 
     private fun fetchSong(songId: String): Candidate? {
+        if (songCache.containsKey(songId)) return songCache[songId]
+
         val encodedId = URLEncoder.encode(songId, Charsets.UTF_8.name())
         for (base in baseUrls) {
             for (template in detailPaths) {
                 val url = base.trimEnd('/') + template.format(encodedId)
                 val json = fetchJson(url) ?: continue
-                parseCandidates(json).firstOrNull()?.let { return it }
+                val candidate = parseCandidates(json).firstOrNull()
+                if (candidate != null) {
+                    putBoundedCache(songCache, songId, candidate, maxSize = 128)
+                    return candidate
+                }
             }
         }
+
+        putBoundedCache(songCache, songId, null, maxSize = 128)
         return null
     }
 
