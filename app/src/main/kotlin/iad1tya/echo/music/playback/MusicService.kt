@@ -2,6 +2,10 @@
 
 package iad1tya.echo.music.playback
 
+import java.util.concurrent.atomic.AtomicReference
+
+import java.util.concurrent.CountDownLatch
+
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import android.Manifest
@@ -3229,11 +3233,66 @@ class MusicService :
     }
 
     private fun persistQueueSnapshot() {
-        if (player.mediaItemCount == 0) {
-            return
+        val snapshot = captureQueuePersistSnapshot() ?: return
+
+        runCatching {
+            filesDir.resolve(PERSISTENT_QUEUE_FILE).outputStream().use { fos ->
+                ObjectOutputStream(fos).use { oos ->
+                    oos.writeObject(snapshot.persistQueue)
+                }
+            }
+        }.onFailure {
+            reportException(it)
+        }
+        runCatching {
+            filesDir.resolve(PERSISTENT_AUTOMIX_FILE).outputStream().use { fos ->
+                ObjectOutputStream(fos).use { oos ->
+                    oos.writeObject(snapshot.persistAutomix)
+                }
+            }
+        }.onFailure {
+            reportException(it)
+        }
+        runCatching {
+            filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE).outputStream().use { fos ->
+                ObjectOutputStream(fos).use { oos ->
+                    oos.writeObject(snapshot.persistPlayerState)
+                }
+            }
+        }.onFailure {
+            reportException(it)
+        }
+    }
+
+    private fun captureQueuePersistSnapshot(): QueuePersistSnapshot? {
+        if (Looper.myLooper() == player.applicationLooper) {
+            return buildQueuePersistSnapshot()
         }
 
-        // Save current queue with proper type information
+        val snapshotRef = AtomicReference<QueuePersistSnapshot?>(null)
+        val latch = CountDownLatch(1)
+
+        Handler(player.applicationLooper).post {
+            try {
+                snapshotRef.set(buildQueuePersistSnapshot())
+            } finally {
+                latch.countDown()
+            }
+        }
+
+        return try {
+            if (latch.await(1500L, TimeUnit.MILLISECONDS)) snapshotRef.get() else null
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            null
+        }
+    }
+
+    private fun buildQueuePersistSnapshot(): QueuePersistSnapshot? {
+        if (player.mediaItemCount == 0) {
+            return null
+        }
+
         val persistQueue = currentQueue.toPersistQueue(
             title = queueTitle,
             items = player.mediaItems.mapNotNull { it.metadata },
@@ -3249,7 +3308,6 @@ class MusicService :
                 position = 0,
             )
 
-        // Save player state
         val persistPlayerState = PersistPlayerState(
             playWhenReady = player.playWhenReady,
             repeatMode = player.repeatMode,
@@ -3260,34 +3318,18 @@ class MusicService :
             playbackState = player.playbackState
         )
 
-        runCatching {
-            filesDir.resolve(PERSISTENT_QUEUE_FILE).outputStream().use { fos ->
-                ObjectOutputStream(fos).use { oos ->
-                    oos.writeObject(persistQueue)
-                }
-            }
-        }.onFailure {
-            reportException(it)
-        }
-        runCatching {
-            filesDir.resolve(PERSISTENT_AUTOMIX_FILE).outputStream().use { fos ->
-                ObjectOutputStream(fos).use { oos ->
-                    oos.writeObject(persistAutomix)
-                }
-            }
-        }.onFailure {
-            reportException(it)
-        }
-        runCatching {
-            filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE).outputStream().use { fos ->
-                ObjectOutputStream(fos).use { oos ->
-                    oos.writeObject(persistPlayerState)
-                }
-            }
-        }.onFailure {
-            reportException(it)
-        }
+        return QueuePersistSnapshot(
+            persistQueue = persistQueue,
+            persistAutomix = persistAutomix,
+            persistPlayerState = persistPlayerState,
+        )
     }
+
+    private data class QueuePersistSnapshot(
+        val persistQueue: PersistQueue,
+        val persistAutomix: PersistQueue,
+        val persistPlayerState: PersistPlayerState,
+    )
 
     override fun startForegroundService(service: Intent?): ComponentName? {
         return try {
