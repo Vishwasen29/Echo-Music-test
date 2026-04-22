@@ -2863,7 +2863,9 @@ class MusicService :
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
-        val alreadyEscalated = retryJob?.cancel()
+        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
+
+        retryJob?.cancel()
         retryJob = scope.launch {
             if (alreadyEscalated) {
                 Log.d("MusicService", "Repeated page reload error for $mediaId with background video fallback already enabled; stopping retry storm")
@@ -2884,26 +2886,12 @@ class MusicService :
     private fun handleExpiredUrlError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
+        val alreadyEscalated = YTPlayerUtils.markDirectAudioForbidden(mediaId)
 
         songUrlCache.remove(mediaId)
         try {
             YTPlayerUtils.forceRefreshForVideo(mediaId)
         } catch (e: Exception) {
-            Log.e("MusicService", "Failed to clear decryption caches", e)
-        }
-
-        retryJob?.cancel()
-        retryJob = scope.launch {
-            delay(RETRY_DELAY_MS)
-
-            val currentPosition = player.currentPosition
-            val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, currentPosition)
-            player.prepare()
-            player.play()
-            Log.d("MusicService", "Retrying playback for $mediaId after 403 error")
-        }
-    } catch (e: Exception) {
             Log.e("MusicService", "Failed to clear decryption caches", e)
         }
 
@@ -2942,7 +2930,6 @@ class MusicService :
             Log.d("MusicService", "Retrying playback for $mediaId after generic IO error")
         }
     }
-    }
 
     private fun handleFinalFailure() {
         if (dataStore.get(AutoSkipNextOnErrorKey, false)) {
@@ -2970,14 +2957,28 @@ class MusicService :
                                 OkHttpClient
                                     .Builder()
                                     .proxy(YouTube.proxy)
+                                    .dns { hostname ->
+                                        InetAddress.getAllByName(hostname)
+                                            .sortedBy { if (it is Inet4Address) 0 else 1 }
+                                            .toList()
+                                    }
                                     .addInterceptor { chain ->
                                         val request = chain.request()
                                         val clientParam = request.url.queryParameter("c")
                                         val ua = StreamClientUtils.resolveUserAgent(clientParam)
                                         val originReferer = StreamClientUtils.resolveOriginReferer(clientParam)
+                                        val host = request.url.host.lowercase()
+                                        val isYoutubeMediaHost = host.contains("googlevideo.com") || host.contains("youtube.com") || host.contains("ytimg.com")
                                         val builder = request.newBuilder().header("User-Agent", ua)
                                         originReferer.origin?.let { builder.header("Origin", it) }
                                         originReferer.referer?.let { builder.header("Referer", it) }
+                                        if (isYoutubeMediaHost) {
+                                            builder.header("Accept-Encoding", "identity")
+                                            if (request.header("Range").isNullOrBlank()) {
+                                                builder.header("Range", "bytes=0-")
+                                            }
+                                            YouTube.cookie?.takeIf { it.isNotBlank() }?.let { builder.header("Cookie", it) }
+                                        }
                                         chain.proceed(builder.build())
                                     }
                                     .connectTimeout(5, TimeUnit.SECONDS)
