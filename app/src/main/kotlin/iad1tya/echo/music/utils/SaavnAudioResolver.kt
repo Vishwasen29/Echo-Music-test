@@ -19,9 +19,9 @@ import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .callTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(6, TimeUnit.SECONDS)
+        .callTimeout(6, TimeUnit.SECONDS)
         .build()
 
     private val baseUrls = listOf(
@@ -46,6 +46,8 @@ object SaavnAudioResolver {
 
     private val searchCache = linkedMapOf<String, List<Candidate>>()
     private val songCache = linkedMapOf<String, Candidate?>()
+
+    private const val SIMPLE_RESOLVE_RESULT_LIMIT = 6
 
     private fun <T> putBoundedCache(cache: LinkedHashMap<String, T>, key: String, value: T, maxSize: Int) {
         if (!cache.containsKey(key) && cache.size >= maxSize) {
@@ -133,32 +135,13 @@ object SaavnAudioResolver {
     ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
         runCatching {
             val queryVariants = buildQueries(mediaMetadata)
-            val allCandidates = linkedMapOf<String, Candidate>()
 
             for (query in queryVariants) {
-                search(query).forEach { candidate ->
-                    allCandidates.putIfAbsent(candidate.id, candidate)
+                val ranked = rankCandidatesForRequest(resolveSearch(query), mediaMetadata)
+                for ((candidate, candidateScore) in ranked) {
+                    if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
+                    candidateToResolvedStream(candidate, audioQuality)?.let { return@runCatching it }
                 }
-
-                if (allCandidates.isEmpty()) continue
-
-                val stagedResolved = rankCandidatesForRequest(allCandidates.values, mediaMetadata)
-                    .firstNotNullOfOrNull { (candidate, candidateScore) ->
-                        if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) return@firstNotNullOfOrNull null
-                        candidateToResolvedStream(candidate, audioQuality)
-                    }
-
-                if (stagedResolved != null) {
-                    return@runCatching stagedResolved
-                }
-            }
-
-            if (allCandidates.isEmpty()) return@runCatching null
-
-            val ranked = rankCandidatesForRequest(allCandidates.values, mediaMetadata)
-            for ((candidate, candidateScore) in ranked) {
-                if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
-                candidateToResolvedStream(candidate, audioQuality)?.let { return@runCatching it }
             }
 
             null
@@ -293,8 +276,6 @@ object SaavnAudioResolver {
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
         val title = mediaMetadata.title.trim()
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
-        val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
-        val album = mediaMetadata.album?.title?.trim().orEmpty()
         val strippedTitle = normalizeTitleCore(title).ifBlank { title }
 
         val queries = linkedSetOf<String>()
@@ -306,19 +287,7 @@ object SaavnAudioResolver {
 
         add(title, primaryArtist)
         add(strippedTitle, primaryArtist)
-        add(title, primaryArtist, secondaryArtist)
-        add(strippedTitle, primaryArtist, secondaryArtist)
-        add(title, album, primaryArtist)
-        add(strippedTitle, album, primaryArtist)
         add(title)
-        add(strippedTitle)
-        add(title, album)
-        add(strippedTitle, album)
-
-        if (primaryArtist.isNotBlank()) {
-            add(title, secondaryArtist)
-            add(strippedTitle, secondaryArtist)
-        }
 
         return queries.toList()
     }
@@ -363,6 +332,29 @@ object SaavnAudioResolver {
         }
 
         return null
+    }
+
+    private fun resolveSearch(query: String): List<Candidate> {
+        if (query.isBlank()) return emptyList()
+
+        val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
+        val base = baseUrls.firstOrNull() ?: return emptyList()
+        val path = searchPaths.firstOrNull() ?: return emptyList()
+        val paramVariants = listOf(
+            "query=$encoded&limit=$SIMPLE_RESOLVE_RESULT_LIMIT",
+            "q=$encoded&limit=$SIMPLE_RESOLVE_RESULT_LIMIT",
+        )
+
+        for (params in paramVariants) {
+            val url = base.trimEnd('/') + path + "?" + params
+            val json = fetchJson(url) ?: continue
+            val parsed = parseCandidates(json)
+            if (parsed.isNotEmpty()) {
+                return parsed.take(SIMPLE_RESOLVE_RESULT_LIMIT)
+            }
+        }
+
+        return emptyList()
     }
 
     private fun search(query: String): List<Candidate> {
