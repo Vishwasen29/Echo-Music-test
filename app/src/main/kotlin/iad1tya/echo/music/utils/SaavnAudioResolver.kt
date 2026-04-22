@@ -47,6 +47,13 @@ object SaavnAudioResolver {
     private val searchCache = linkedMapOf<String, List<Candidate>>()
     private val songCache = linkedMapOf<String, Candidate?>()
 
+    // echo_saavn_quality_patch_v2
+    private const val MAX_PROGRESSIVE_QUERY_COUNT = 5
+    private const val MAX_RESULTS_PER_QUERY = 8
+    private const val EARLY_ACCEPT_SCORE = 220
+    private const val FINAL_ACCEPT_SCORE = 165
+    private const val STRONG_TITLE_SCORE = 125
+
     private const val MODERATE_RESOLVE_RESULT_LIMIT = 8
     private const val MAX_MODERATE_QUERY_VARIANTS = 5
 
@@ -136,17 +143,11 @@ object SaavnAudioResolver {
         audioQuality: AudioQuality,
     ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
         runCatching {
-            val queryVariants = buildQueries(mediaMetadata).take(MAX_MODERATE_QUERY_VARIANTS)
             val allCandidates = linkedMapOf<String, Candidate>()
+            val progressiveQueries = buildQueries(mediaMetadata).take(MAX_PROGRESSIVE_QUERY_COUNT)
 
-            for (query in queryVariants) {
-                resolveSearch(query).forEach { candidate ->
-                    allCandidates.putIfAbsent(candidate.id, candidate)
-                }
-
-                if (allCandidates.isEmpty()) continue
-
-                val ranked = allCandidates.values
+            for (query in progressiveQueries) {
+                val ranked = search(query)
                     .map { candidate -> candidate to score(candidate, mediaMetadata) }
                     .sortedWith(
                         compareByDescending<Pair<Candidate, Int>> { it.second }
@@ -154,30 +155,68 @@ object SaavnAudioResolver {
                     )
 
                 for ((candidate, candidateScore) in ranked) {
+                    allCandidates.putIfAbsent(candidate.id, candidate)
                     if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
+
                     val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
                         candidate
                     } else {
                         fetchSong(candidate.id) ?: candidate
                     }
+                    val hydratedScore = score(hydrated, mediaMetadata)
+                    if (!isStrongAccept(hydrated, hydratedScore, mediaMetadata)) continue
+                    if (hydratedScore < EARLY_ACCEPT_SCORE) continue
 
-                    for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
-                        val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
-                        return@runCatching ResolvedStream(
-                            url = cleanedUrl,
-                            bitrate = link.bitrate.takeIf { it > 0 },
-                            mimeType = inferMimeType(cleanedUrl),
-                            sampleRate = 44100,
-                            provider = "Saavn",
-                            songId = hydrated.id,
-                            matchedTitle = hydrated.title,
-                            matchedArtists = hydrated.artists,
-                            thumbnailUrl = hydrated.thumbnailUrl,
-                            albumTitle = hydrated.albumName,
-                            durationSeconds = hydrated.duration,
-                        )
-                    }
+                    val link = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: continue
+                    return@runCatching ResolvedStream(
+                        url = link.url,
+                        bitrate = link.bitrate.takeIf { it > 0 },
+                        mimeType = inferMimeType(link.url),
+                        sampleRate = 44100,
+                        provider = "Saavn",
+                        songId = hydrated.id,
+                        matchedTitle = hydrated.title,
+                        matchedArtists = hydrated.artists,
+                        thumbnailUrl = hydrated.thumbnailUrl,
+                        albumTitle = hydrated.albumName,
+                        durationSeconds = hydrated.duration,
+                    )
                 }
+            }
+
+            val ranked = allCandidates.values
+                .map { candidate -> candidate to score(candidate, mediaMetadata) }
+                .sortedWith(
+                    compareByDescending<Pair<Candidate, Int>> { it.second }
+                        .thenByDescending { qualityScore(it.first.downloadLinks) }
+                )
+
+            for ((candidate, candidateScore) in ranked) {
+                if (candidateScore < FINAL_ACCEPT_SCORE) continue
+                if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
+                val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
+                    candidate
+                } else {
+                    fetchSong(candidate.id) ?: candidate
+                }
+                val hydratedScore = score(hydrated, mediaMetadata)
+                if (hydratedScore < FINAL_ACCEPT_SCORE) continue
+                if (!isStrongAccept(hydrated, hydratedScore, mediaMetadata)) continue
+
+                val link = pickDownloadLink(hydrated.downloadLinks, audioQuality) ?: continue
+                return@runCatching ResolvedStream(
+                    url = link.url,
+                    bitrate = link.bitrate.takeIf { it > 0 },
+                    mimeType = inferMimeType(link.url),
+                    sampleRate = 44100,
+                    provider = "Saavn",
+                    songId = hydrated.id,
+                    matchedTitle = hydrated.title,
+                    matchedArtists = hydrated.artists,
+                    thumbnailUrl = hydrated.thumbnailUrl,
+                    albumTitle = hydrated.albumName,
+                    durationSeconds = hydrated.duration,
+                )
             }
 
             null
@@ -310,10 +349,13 @@ object SaavnAudioResolver {
     }
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
-        val title = mediaMetadata.title.trim()
+        val rawTitle = mediaMetadata.title.trim()
+        val cleanedTitle = cleanRequestedTitleForSaavn(rawTitle)
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
+        val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
         val album = mediaMetadata.album?.title?.trim().orEmpty()
-        val strippedTitle = normalizeTitleCore(title).ifBlank { title }
+        val normalizedTitle = normalizeTitleCore(cleanedTitle).ifBlank { normalizeTitleCore(rawTitle) }
+            .ifBlank { cleanedTitle.ifBlank { rawTitle } }
 
         val queries = linkedSetOf<String>()
 
@@ -322,80 +364,15 @@ object SaavnAudioResolver {
             if (query.isNotBlank()) queries += query
         }
 
-        add(title, primaryArtist)
-        add(strippedTitle, primaryArtist)
-        add(title, album, primaryArtist)
-        add(strippedTitle, album, primaryArtist)
-        add(title)
+        add(cleanedTitle, primaryArtist)
+        add(normalizedTitle, primaryArtist)
+        add(cleanedTitle, album, primaryArtist)
+        add(cleanedTitle, primaryArtist, secondaryArtist)
+        add(normalizedTitle, primaryArtist, secondaryArtist)
+        add(cleanedTitle)
+        add(normalizedTitle)
 
-        return queries.toList()
-    }
-
-    private fun rankCandidatesForRequest(
-        candidates: Collection<Candidate>,
-        mediaMetadata: MediaMetadata,
-    ): List<Pair<Candidate, Int>> {
-        return candidates
-            .map { candidate -> candidate to score(candidate, mediaMetadata) }
-            .sortedWith(
-                compareByDescending<Pair<Candidate, Int>> { it.second }
-                    .thenByDescending { qualityScore(it.first.downloadLinks) }
-            )
-    }
-
-    private fun candidateToResolvedStream(
-        candidate: Candidate,
-        audioQuality: AudioQuality,
-    ): ResolvedStream? {
-        val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
-            candidate
-        } else {
-            fetchSong(candidate.id) ?: candidate
-        }
-
-        for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
-            val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
-            return ResolvedStream(
-                url = cleanedUrl,
-                bitrate = link.bitrate.takeIf { it > 0 },
-                mimeType = inferMimeType(cleanedUrl),
-                sampleRate = 44100,
-                provider = "Saavn",
-                songId = hydrated.id,
-                matchedTitle = hydrated.title,
-                matchedArtists = hydrated.artists,
-                thumbnailUrl = hydrated.thumbnailUrl,
-                albumTitle = hydrated.albumName,
-                durationSeconds = hydrated.duration,
-            )
-        }
-
-        return null
-    }
-
-    private fun resolveSearch(query: String): List<Candidate> {
-        if (query.isBlank()) return emptyList()
-
-        val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        val paramVariants = listOf(
-            "query=$encoded&limit=$MODERATE_RESOLVE_RESULT_LIMIT",
-            "q=$encoded&limit=$MODERATE_RESOLVE_RESULT_LIMIT",
-        )
-
-        for (base in baseUrls) {
-            for (path in searchPaths) {
-                for (params in paramVariants) {
-                    val url = base.trimEnd('/') + path + "?" + params
-                    val json = fetchJson(url) ?: continue
-                    val parsed = parseCandidates(json)
-                    if (parsed.isNotEmpty()) {
-                        return parsed.take(MODERATE_RESOLVE_RESULT_LIMIT)
-                    }
-                }
-            }
-        }
-
-        return emptyList()
+        return queries.toList().distinct().take(MAX_PROGRESSIVE_QUERY_COUNT)
     }
 
     private fun search(query: String): List<Candidate> {
@@ -403,23 +380,24 @@ object SaavnAudioResolver {
 
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
         val paramVariants = listOf(
-            "query=$encoded&limit=12",
-            "q=$encoded&limit=12",
+            "query=$encoded&limit=$MAX_RESULTS_PER_QUERY",
+            "q=$encoded&limit=$MAX_RESULTS_PER_QUERY",
             "query=$encoded",
-            "q=$encoded",
         )
         val all = linkedMapOf<String, Candidate>()
-        searchLoop@ for (base in baseUrls) {
+        outer@ for (base in baseUrls) {
             for (path in searchPaths) {
                 for (params in paramVariants) {
                     val url = base.trimEnd('/') + path + "?" + params
                     val json = fetchJson(url) ?: continue
-                    parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                    if (all.size >= 8) break@searchLoop
+                    parseCandidates(json)
+                        .take(MAX_RESULTS_PER_QUERY)
+                        .forEach { all.putIfAbsent(it.id, it) }
+                    if (all.size >= MAX_RESULTS_PER_QUERY) break@outer
                 }
             }
         }
-        val results = all.values.toList()
+        val results = all.values.toList().take(MAX_RESULTS_PER_QUERY)
         putBoundedCache(searchCache, query, results, maxSize = 64)
         return results
     }
@@ -729,56 +707,49 @@ object SaavnAudioResolver {
         val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
         val requestedPrimaryArtist = requestedArtists.firstOrNull().orEmpty()
         if (requestedPrimaryArtist.isBlank()) return true
+        if (candidateArtists.isEmpty()) return false
 
         val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
-
-        if (candidatePrimaryArtist.isBlank()) {
-            return candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
-        }
-
         if (artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)) return true
 
         val requestedPrimaryAppearsSomewhere = candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
         if (!requestedPrimaryAppearsSomewhere) return false
 
-        // Allow reordered duet/collab credits, but reject tracks where a different singer is the
-        // primary artist and the requested primary artist only appears as a secondary/featured name.
-        return requestedArtists.any { wanted -> artistNamesMatch(candidatePrimaryArtist, wanted) }
+        val candidateLeadIsRequestedArtistGroup = requestedArtists.any { wanted -> artistNamesMatch(candidatePrimaryArtist, wanted) }
+        if (!candidateLeadIsRequestedArtistGroup) return false
+
+        return candidateArtists.take(2).any { artistNamesMatch(it, requestedPrimaryArtist) }
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
         if (hasUnexpectedVariantTerms(candidate, requested.title)) return false
 
         val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
-        val requestedTitle = normalizeTitleCore(requested.title)
+        val requestedTitle = normalizeTitleCore(cleanRequestedTitleForSaavn(requested.title))
         val candidateTitle = normalizeTitleCore(candidate.title)
         val titleExact = candidateTitle == requestedTitle
-        val titleStrong = titleExact ||
-            candidateTitle.contains(requestedTitle) ||
-            requestedTitle.contains(candidateTitle) ||
-            tokenSimilarity(candidateTitle, requestedTitle) >= 32
+        val titleStrong = titleExact || tokenSimilarity(candidateTitle, requestedTitle) >= 38 ||
+            candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle)
         val durationDiff = if (requested.duration > 0 && candidate.duration != null) {
             kotlin.math.abs(candidate.duration - requested.duration)
         } else {
             0
         }
-        val durationClose = requested.duration <= 0 ||
-            candidate.duration == null ||
-            durationDiff <= 15
+        val durationClose = requested.duration <= 0 || candidate.duration == null || durationDiff <= 12
 
         return if (requestedPrimaryArtist.isBlank()) {
-            score >= 92 && titleStrong && durationClose
+            score >= 120 && titleStrong && durationClose
         } else {
-            score >= 100 &&
+            score >= FINAL_ACCEPT_SCORE &&
                 titleStrong &&
                 durationClose &&
                 hasStrongPrimaryArtistMatch(candidate, requested) &&
-                (titleExact || durationDiff <= 8 || score >= 112)
+                (titleExact || durationDiff <= 8 || score >= EARLY_ACCEPT_SCORE)
         }
     }
 
     private fun score(candidate: Candidate, requested: MediaMetadata): Int {
-        val requestedTitleRaw = requested.title.trim()
+        val requestedTitleRaw = cleanRequestedTitleForSaavn(requested.title.trim())
         val candidateTitleRaw = candidate.title.trim()
         val requestedTitle = normalizeTitleCore(requestedTitleRaw)
         val candidateTitle = normalizeTitleCore(candidateTitleRaw)
@@ -791,49 +762,45 @@ object SaavnAudioResolver {
 
         var score = 0
 
-        when {
-            candidateTitle == requestedTitle -> score += 135
-            candidateTitleRaw.equals(requestedTitleRaw, ignoreCase = true) -> score += 125
-            candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle) -> score += 85
-            else -> score += tokenSimilarity(candidateTitle, requestedTitle)
+        score += when {
+            candidateTitle == requestedTitle -> 170
+            candidateTitleRaw.equals(requestedTitleRaw, ignoreCase = true) -> 155
+            candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle) -> 105
+            else -> tokenSimilarity(candidateTitle, requestedTitle)
         }
 
         if (requestedPrimaryArtist.isNotBlank()) {
             score += when {
-                artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist) -> 135
-                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } &&
-                    requestedArtists.any { artistNamesMatch(candidatePrimaryArtist, it) } -> 96
-                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 18
-                candidateArtists.isNotEmpty() -> -75
-                else -> -18
+                artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist) -> 165
+                candidateArtists.take(2).any { artistNamesMatch(it, requestedPrimaryArtist) } &&
+                    requestedArtists.any { artistNamesMatch(candidatePrimaryArtist, it) } -> 110
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> -20
+                candidateArtists.isNotEmpty() -> -105
+                else -> -24
             }
         }
 
         val secondaryMatches = requestedArtists.drop(1).count { wanted ->
             candidateArtists.any { found -> artistNamesMatch(found, wanted) }
         }
-        score += secondaryMatches * 24
-
-        if (requestedArtists.isNotEmpty() && candidateArtists.isNotEmpty() && secondaryMatches == 0 && !candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }) {
-            score -= 24
-        }
+        score += secondaryMatches * 16
 
         if (requestedAlbum.isNotBlank() && candidateAlbum.isNotBlank()) {
             score += when {
-                requestedAlbum == candidateAlbum -> 28
-                candidateAlbum.contains(requestedAlbum) || requestedAlbum.contains(candidateAlbum) -> 14
-                else -> -8
+                requestedAlbum == candidateAlbum -> 24
+                candidateAlbum.contains(requestedAlbum) || requestedAlbum.contains(candidateAlbum) -> 10
+                else -> -6
             }
         }
 
         if (requested.duration > 0 && candidate.duration != null && candidate.duration > 0) {
             val difference = abs(candidate.duration - requested.duration)
             score += when {
-                difference <= 2 -> 30
-                difference <= 5 -> 22
-                difference <= 10 -> 12
+                difference <= 2 -> 34
+                difference <= 5 -> 26
+                difference <= 10 -> 15
                 difference <= 18 -> 0
-                else -> -28
+                else -> -36
             }
         }
 
@@ -999,6 +966,22 @@ object SaavnAudioResolver {
             .replace(Regex("""\b(feat|featuring|ft)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
+    }
+
+    private fun cleanRequestedTitleForSaavn(value: String): String {
+        val trimmed = value.trim()
+        val noMeta = trimmed
+            .replace(Regex(r"""\s*\((official|lyric|lyrics|audio|video|visualizer|music video|from .*?)\)""", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex(r"""\s*\[(official|lyric|lyrics|audio|video|visualizer|music video|from .*?)\]""", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex(r"""\s+"""), " ")
+            .trim()
+        val dashed = noMeta.split(Regex(r"""\s+-\s+"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        return when {
+            dashed.size >= 2 && normalizeArtist(dashed.last()).length >= 3 -> dashed.first()
+            else -> noMeta
+        }
     }
 
     private fun normalizeTitleCore(value: String): String {
