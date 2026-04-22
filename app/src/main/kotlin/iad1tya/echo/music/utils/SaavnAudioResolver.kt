@@ -134,44 +134,31 @@ object SaavnAudioResolver {
         runCatching {
             val queryVariants = buildQueries(mediaMetadata)
             val allCandidates = linkedMapOf<String, Candidate>()
-            queryVariants.forEach { query ->
+
+            for (query in queryVariants) {
                 search(query).forEach { candidate ->
                     allCandidates.putIfAbsent(candidate.id, candidate)
                 }
+
+                if (allCandidates.isEmpty()) continue
+
+                val stagedResolved = rankCandidatesForRequest(allCandidates.values, mediaMetadata)
+                    .firstNotNullOfOrNull { (candidate, candidateScore) ->
+                        if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) return@firstNotNullOfOrNull null
+                        candidateToResolvedStream(candidate, audioQuality)
+                    }
+
+                if (stagedResolved != null) {
+                    return@runCatching stagedResolved
+                }
             }
+
             if (allCandidates.isEmpty()) return@runCatching null
 
-            val ranked = allCandidates.values
-                .map { candidate -> candidate to score(candidate, mediaMetadata) }
-                .sortedWith(
-                    compareByDescending<Pair<Candidate, Int>> { it.second }
-                        .thenByDescending { qualityScore(it.first.downloadLinks) }
-                )
-
+            val ranked = rankCandidatesForRequest(allCandidates.values, mediaMetadata)
             for ((candidate, candidateScore) in ranked) {
                 if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
-                val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
-                    candidate
-                } else {
-                    fetchSong(candidate.id) ?: candidate
-                }
-
-                for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
-                    val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
-                    return@runCatching ResolvedStream(
-                        url = cleanedUrl,
-                        bitrate = link.bitrate.takeIf { it > 0 },
-                        mimeType = inferMimeType(cleanedUrl),
-                        sampleRate = 44100,
-                        provider = "Saavn",
-                        songId = hydrated.id,
-                        matchedTitle = hydrated.title,
-                        matchedArtists = hydrated.artists,
-                        thumbnailUrl = hydrated.thumbnailUrl,
-                        albumTitle = hydrated.albumName,
-                        durationSeconds = hydrated.duration,
-                    )
-                }
+                candidateToResolvedStream(candidate, audioQuality)?.let { return@runCatching it }
             }
 
             null
@@ -336,6 +323,48 @@ object SaavnAudioResolver {
         return queries.toList()
     }
 
+    private fun rankCandidatesForRequest(
+        candidates: Collection<Candidate>,
+        mediaMetadata: MediaMetadata,
+    ): List<Pair<Candidate, Int>> {
+        return candidates
+            .map { candidate -> candidate to score(candidate, mediaMetadata) }
+            .sortedWith(
+                compareByDescending<Pair<Candidate, Int>> { it.second }
+                    .thenByDescending { qualityScore(it.first.downloadLinks) }
+            )
+    }
+
+    private fun candidateToResolvedStream(
+        candidate: Candidate,
+        audioQuality: AudioQuality,
+    ): ResolvedStream? {
+        val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
+            candidate
+        } else {
+            fetchSong(candidate.id) ?: candidate
+        }
+
+        for (link in orderedDownloadLinks(hydrated.downloadLinks, audioQuality)) {
+            val cleanedUrl = normalizeDownloadUrl(link.url) ?: continue
+            return ResolvedStream(
+                url = cleanedUrl,
+                bitrate = link.bitrate.takeIf { it > 0 },
+                mimeType = inferMimeType(cleanedUrl),
+                sampleRate = 44100,
+                provider = "Saavn",
+                songId = hydrated.id,
+                matchedTitle = hydrated.title,
+                matchedArtists = hydrated.artists,
+                thumbnailUrl = hydrated.thumbnailUrl,
+                albumTitle = hydrated.albumName,
+                durationSeconds = hydrated.duration,
+            )
+        }
+
+        return null
+    }
+
     private fun search(query: String): List<Candidate> {
         searchCache[query]?.let { return it }
 
@@ -347,13 +376,13 @@ object SaavnAudioResolver {
             "q=$encoded",
         )
         val all = linkedMapOf<String, Candidate>()
-        for (base in baseUrls) {
+        searchLoop@ for (base in baseUrls) {
             for (path in searchPaths) {
                 for (params in paramVariants) {
                     val url = base.trimEnd('/') + path + "?" + params
                     val json = fetchJson(url) ?: continue
                     parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                    if (all.size >= 8) break
+                    if (all.size >= 8) break@searchLoop
                 }
             }
         }
@@ -829,7 +858,9 @@ object SaavnAudioResolver {
         if ("tribute" in extraTerms) score -= 95
         if ("instrumental" in extraTerms) score -= 100
         if ("acoustic" in extraTerms) score -= 80
+        if ("unplugged" in extraTerms) score -= 78
         if ("live" in extraTerms) score -= 75
+        if ("reprise" in extraTerms || "reprised" in extraTerms) score -= 82
         if ("remix" in extraTerms) score -= 90
         if ("slowed" in extraTerms || "reverb" in extraTerms) score -= 95
         if ("nightcore" in extraTerms || "lofi" in extraTerms || "lo fi" in extraTerms) score -= 90
@@ -847,7 +878,10 @@ object SaavnAudioResolver {
             "tribute",
             "instrumental",
             "acoustic",
+            "unplugged",
             "live",
+            "reprise",
+            "reprised",
             "remix",
             "slowed",
             "reverb",
@@ -883,7 +917,10 @@ object SaavnAudioResolver {
                 "tribute",
                 "instrumental",
                 "acoustic",
+                "unplugged",
                 "live",
+                "reprise",
+                "reprised",
                 "remix",
                 "slowed",
                 "reverb",

@@ -274,6 +274,7 @@ class MusicService :
     private var lyricsPreloadManager: LyricsPreloadManager? = null
     // CHATGPT_ALL_IN_ONE_HOTFIX
     private var queueAudioPrefetchManager: QueueAudioPrefetchManager? = null
+    private var persistQueueJob: Job? = null
 
     private val audioQuality by enumPreference(
         this,
@@ -3208,7 +3209,26 @@ class MusicService :
         }
     }
 
-    private fun saveQueueToDisk() {
+    private fun saveQueueToDisk(force: Boolean = false) {
+        if (player.mediaItemCount == 0) {
+            return
+        }
+
+        if (force) {
+            persistQueueJob?.cancel()
+            persistQueueJob = null
+            persistQueueSnapshot()
+            return
+        }
+
+        persistQueueJob?.cancel()
+        persistQueueJob = scope.launch(Dispatchers.IO) {
+            delay(750L)
+            persistQueueSnapshot()
+        }
+    }
+
+    private fun persistQueueSnapshot() {
         if (player.mediaItemCount == 0) {
             return
         }
@@ -3530,7 +3550,7 @@ class MusicService :
 
     override fun onDestroy() {
         if (dataStore.get(PersistentQueueKey, true)) {
-            saveQueueToDisk()
+            saveQueueToDisk(force = true)
         }
         // TTS cleanup
         ttsManager.shutdown()

@@ -1,6 +1,8 @@
 package iad1tya.echo.music.playback
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.os.PowerManager
 import android.util.Log
 import androidx.media3.common.Player
 import iad1tya.echo.music.constants.QueueAudioPrefetchCountKey
@@ -26,45 +28,89 @@ class QueueAudioPrefetchManager(
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var prefetchJob: Job? = null
+    private val connectivityManager: ConnectivityManager? =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    private val powerManager: PowerManager? =
+        context.getSystemService(Context.POWER_SERVICE) as? PowerManager
 
     fun onQueuePositionChanged(player: Player) {
         prefetchJob?.cancel()
 
         prefetchJob = scope.launch {
             val preferences = context.dataStore.data.first()
-            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: false
+            val enabled = preferences[QueueAudioPrefetchEnabledKey] ?: true
             if (!enabled) return@launch
             if (!player.isPlaying) return@launch
-
-            val prefetchCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
-                .coerceIn(1, MAX_PREFETCH_COUNT)
 
             if (!networkConnectivity.isCurrentlyConnected()) {
                 Log.d(TAG, "Network unavailable, skipping queue audio prefetch")
                 return@launch
             }
 
+            val requestedCount = (preferences[QueueAudioPrefetchCountKey] ?: DEFAULT_PREFETCH_COUNT)
+                .coerceIn(1, MAX_PREFETCH_COUNT)
+            val effectiveCount = resolveEffectivePrefetchCount(player, requestedCount)
+            if (effectiveCount <= 0) return@launch
+
             val nextTargets = withContext(Dispatchers.Main.immediate) {
-                getNextMediaTargets(player, prefetchCount)
+                getNextMediaTargets(player, effectiveCount)
             }
             if (nextTargets.isEmpty()) return@launch
 
             nextTargets.forEachIndexed { index, target ->
                 if (!isActive) return@launch
+                val prefetchBytes = resolvePrefetchBytesForIndex(index)
+                if (prefetchBytes <= 0L) return@forEachIndexed
+
                 runCatching {
                     downloadUtil.prefetchToPlayerCache(
                         mediaId = target.mediaId,
                         metadata = target.metadata,
-                        maxBytes = PREFETCH_BYTES,
+                        maxBytes = prefetchBytes,
                     )
                 }.onFailure {
                     Log.w(TAG, "Prefetch failed for ${target.mediaId}", it)
                 }
-                Log.d(TAG, "Prefetch scheduled ${index + 1}/${nextTargets.size} for ${target.mediaId}")
+
+                Log.d(
+                    TAG,
+                    "Prefetch scheduled ${index + 1}/${nextTargets.size} for ${target.mediaId} (${prefetchBytes / 1024 / 1024} MiB)"
+                )
                 delay(PREFETCH_DELAY_MS)
             }
         }
     }
+
+    private fun resolveEffectivePrefetchCount(player: Player, requestedCount: Int): Int {
+        var count = requestedCount.coerceIn(1, MAX_PREFETCH_COUNT)
+
+        if (isBatterySaverEnabled()) {
+            count = minOf(count, 1)
+        }
+
+        if (isOnMeteredConnection()) {
+            count = minOf(count, 1)
+        }
+
+        if (player.shuffleModeEnabled) {
+            return count
+        }
+
+        return minOf(count, 1)
+    }
+
+    private fun resolvePrefetchBytesForIndex(index: Int): Long {
+        return when {
+            isBatterySaverEnabled() -> BATTERY_SAVER_PREFETCH_BYTES
+            isOnMeteredConnection() -> METERED_PREFETCH_BYTES
+            index == 0 -> PRIMARY_PREFETCH_BYTES
+            else -> SECONDARY_PREFETCH_BYTES
+        }
+    }
+
+    private fun isBatterySaverEnabled(): Boolean = powerManager?.isPowerSaveMode == true
+
+    private fun isOnMeteredConnection(): Boolean = connectivityManager?.isActiveNetworkMetered == true
 
     private data class PrefetchTarget(
         val mediaId: String,
@@ -115,9 +161,12 @@ class QueueAudioPrefetchManager(
 
     private companion object {
         private const val TAG = "QueueAudioPrefetch"
-        private const val DEFAULT_PREFETCH_COUNT = 1
+        private const val DEFAULT_PREFETCH_COUNT = 2
         private const val MAX_PREFETCH_COUNT = 2
-        private const val PREFETCH_BYTES = 2L * 1024L * 1024L
-        private const val PREFETCH_DELAY_MS = 1200L
+        private const val PRIMARY_PREFETCH_BYTES = 4L * 1024L * 1024L
+        private const val SECONDARY_PREFETCH_BYTES = 2L * 1024L * 1024L
+        private const val METERED_PREFETCH_BYTES = 1536L * 1024L
+        private const val BATTERY_SAVER_PREFETCH_BYTES = 1024L * 1024L
+        private const val PREFETCH_DELAY_MS = 300L
     }
 }
