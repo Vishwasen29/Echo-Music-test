@@ -2121,12 +2121,13 @@ class MusicService :
 
             val eq = equalizer
             if (eq != null) {
-                val bands = eq.numberOfBands.toInt().coerceAtLeast(0)
+                val bands = runCatching { eq.numberOfBands.toInt() }.getOrNull()?.coerceAtLeast(0) ?: 0
                 val range = runCatching { eq.bandLevelRange }.getOrNull()
                 val minMb = range?.getOrNull(0)?.toInt() ?: -1500
                 val maxMb = range?.getOrNull(1)?.toInt() ?: 1500
                 val levels = resampleLevelsByIndex(bandLevels, bands)
                 val gainMb = (preampDb * 100).toInt().coerceIn(-1000, 1000)
+                val presetCount = runCatching { eq.numberOfPresets.toInt() }.getOrNull()?.coerceAtLeast(0) ?: 0
 
                 eqCapabilities.value =
                     EqCapabilities(
@@ -2136,19 +2137,21 @@ class MusicService :
                         centerFreqHz = (0 until bands).map { band ->
                             (runCatching { eq.getCenterFreq(band.toShort()) }.getOrNull() ?: 0) / 1000
                         },
-                        systemPresets = (0 until eq.numberOfPresets.toInt()).map { idx ->
+                        systemPresets = (0 until presetCount).map { idx ->
                             runCatching { eq.getPresetName(idx.toShort()).toString() }.getOrNull() ?: "Preset ${idx + 1}"
                         },
                     )
 
                 if (proEqEnabled) {
-                    eq.enabled = true
+                    runCatching { eq.enabled = true }
                     for (i in 0 until bands) {
-                        val bandLevelMb = levels.getOrNull(i)?.coerceIn(minMb, maxMb) ?: (gainMb)
-                        eq.setBandLevel(i.toShort(), (bandLevelMb + gainMb).coerceIn(minMb, maxMb).toShort())
+                        val bandLevelMb = levels.getOrNull(i)?.coerceIn(minMb, maxMb) ?: gainMb
+                        runCatching {
+                            eq.setBandLevel(i.toShort(), (bandLevelMb + gainMb).coerceIn(minMb, maxMb).toShort())
+                        }
                     }
                 } else {
-                    eq.enabled = false
+                    runCatching { eq.enabled = false }
                 }
             }
 
@@ -2164,6 +2167,14 @@ class MusicService :
         } catch (e: Exception) {
             reportException(e)
             eqCapabilities.value = null
+            runCatching { equalizer?.release() }
+            runCatching { bassBoost?.release() }
+            runCatching { virtualizer?.release() }
+            runCatching { loudnessEnhancer?.release() }
+            equalizer = null
+            bassBoost = null
+            virtualizer = null
+            loudnessEnhancer = null
         }
 
         // Apply spatial audio effects (standard + Audio AR)
@@ -2232,14 +2243,15 @@ class MusicService :
         }
 
         equalizer?.let { eq ->
-            val bandCount = eq.numberOfBands.toInt().coerceAtLeast(0)
+            val bandCount = runCatching { eq.numberOfBands.toInt() }.getOrNull()?.coerceAtLeast(0) ?: 0
             val range = runCatching { eq.bandLevelRange }.getOrNull()
             val minMb = range?.getOrNull(0)?.toInt() ?: -1500
             val maxMb = range?.getOrNull(1)?.toInt() ?: 1500
             val center = (0 until bandCount).map { band ->
                 (runCatching { eq.getCenterFreq(band.toShort()) }.getOrNull() ?: 0) / 1000
             }
-            val presets = (0 until eq.numberOfPresets.toInt()).map { idx ->
+            val presetCount = runCatching { eq.numberOfPresets.toInt() }.getOrNull()?.coerceAtLeast(0) ?: 0
+            val presets = (0 until presetCount).map { idx ->
                 runCatching { eq.getPresetName(idx.toShort()).toString() }.getOrNull() ?: "Preset ${idx + 1}"
             }
             eqCapabilities.value = EqCapabilities(bandCount, minMb, maxMb, center, presets)
