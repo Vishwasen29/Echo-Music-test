@@ -65,9 +65,22 @@ jobs:
         env:
           DEBUG_KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
+          if [ -z "$DEBUG_KEYSTORE_B64" ]; then
+            echo "Missing DEBUG_KEYSTORE_B64 secret"
+            exit 1
+          fi
+
           mkdir -p "$HOME/.android"
-          echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+          printf '%s' "$DEBUG_KEYSTORE_B64" | base64 --decode > "$HOME/.android/debug.keystore"
           ls -l "$HOME/.android/debug.keystore"
+
+      - name: Validate debug keystore
+        run: |
+          keytool -list -v \
+            -keystore "$HOME/.android/debug.keystore" \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android
 
       - name: Build ${{ matrix.name }}
         env:
