@@ -891,7 +891,7 @@ object SaavnAudioResolver {
     private fun decodeSaavnUrl(value: String): String {
         return runCatching { java.net.URLDecoder.decode(value, Charsets.UTF_8.name()) }
             .getOrDefault(value)
-            .replace("\/", "/")
+            .replace("\\/", "/")
     }
 
     private fun artistNamesMatch(left: String, right: String): Boolean {
