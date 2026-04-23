@@ -1,5 +1,7 @@
 package iad1tya.echo.music.viewmodels
 
+import iad1tya.echo.music.utils.SaavnAudioResolver
+
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -46,6 +48,7 @@ constructor(
                     } else {
                         val result = YouTube.searchSuggestions(query).getOrNull()
                         val hideExplicit = context.dataStore.get(HideExplicitKey, false)
+                        val saavnSongs = SaavnAudioResolver.searchSongs(query, limit = 6).getOrDefault(emptyList())
 
                         database
                             .searchHistory(query)
@@ -65,6 +68,7 @@ constructor(
                                         ?.distinctBy { it.id }
                                         ?.filterExplicit(hideExplicit)
                                         .orEmpty(),
+                                    saavnSongs = saavnSongs,
                                 )
                             }
                     }
@@ -79,4 +83,5 @@ data class SearchSuggestionViewState(
     val history: List<SearchHistory> = emptyList(),
     val suggestions: List<String> = emptyList(),
     val items: List<YTItem> = emptyList(),
+    val saavnSongs: List<SaavnAudioResolver.SaavnSearchResult> = emptyList(),
 )

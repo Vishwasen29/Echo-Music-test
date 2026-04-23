@@ -1,5 +1,19 @@
 package iad1tya.echo.music.ui.screens.search
 
+import androidx.compose.ui.text.font.FontWeight
+
+import androidx.compose.ui.draw.clip
+
+import androidx.compose.foundation.shape.RoundedCornerShape
+
+import iad1tya.echo.music.utils.SaavnAudioResolver
+
+import iad1tya.echo.music.ui.component.NavigationTitle
+
+import iad1tya.echo.music.playback.queues.SaavnQueue
+
+import coil3.compose.AsyncImage
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -140,6 +154,51 @@ fun OnlineSearchScreen(
             }
         }
 
+
+
+        if (viewState.saavnSongs.isNotEmpty()) {
+            if (viewState.items.isNotEmpty() || viewState.history.isNotEmpty() || viewState.suggestions.isNotEmpty()) {
+                item(key = "saavn_divider") {
+                    HorizontalDivider(
+                        modifier = Modifier.animateItem()
+                    )
+                }
+            }
+
+            item(key = "saavn_quick_header") {
+                NavigationTitle("JioSaavn")
+            }
+
+            items(viewState.saavnSongs, key = { "saavn_quick_${it.sourceSongId}" }) { song ->
+                val saavnLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    menuState.show {
+                        SaavnSongMenu(
+                            song = song,
+                            onDismiss = {
+                                menuState.dismiss()
+                                onDismiss()
+                            }
+                        )
+                    }
+                }
+
+                SaavnSuggestionRow(
+                    song = song,
+                    isActive = mediaMetadata?.id == "saavn:${song.sourceSongId}",
+                    onClick = {
+                        playerConnection.playQueue(SaavnQueue(song))
+                        onDismiss()
+                    },
+                    onLongClick = saavnLongClick,
+                    onMenuClick = saavnLongClick,
+                    modifier = Modifier
+                        .background(if (pureBlack) Color.Black else MaterialTheme.colorScheme.surface)
+                        .focusable()
+                        .animateItem(),
+                )
+            }
+        }
         items(viewState.items, key = { "item_${it.id}" }) { item ->
             YouTubeListItem(
                 item = item,
@@ -373,4 +432,92 @@ fun SuggestionItem(
             )
         }
     }
+}
+
+
+@Composable
+private fun SaavnSuggestionRow(
+    song: SaavnAudioResolver.SaavnSearchResult,
+    isActive: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
+    onMenuClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    ListItem(
+        headlineContent = {
+            Text(
+                text = song.title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+            )
+        },
+        supportingContent = {
+            val details = listOfNotNull(
+                song.artists.joinToString(", ").ifBlank { "Unknown artist" },
+                song.duration?.takeIf { it > 0 }?.let { seconds ->
+                    val min = seconds / 60
+                    val sec = seconds % 60
+                    "%d:%02d".format(min, sec)
+                },
+            ).joinToString(" • ")
+            Text(
+                text = details,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        leadingContent = {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (isActive) MaterialTheme.colorScheme.primary else Color(0xFF242424)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!song.thumbnailUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = song.thumbnailUrl,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Text(
+                        text = "S",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        },
+        trailingContent = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Saavn",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = { onMenuClick?.invoke() }) {
+                    Icon(
+                        painter = painterResource(R.drawable.more_vert),
+                        contentDescription = null,
+                    )
+                }
+            }
+        },
+        modifier = modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+    )
 }

@@ -270,16 +270,18 @@ private fun saavnSearchResultToMetadata(song: SaavnAudioResolver.SaavnSearchResu
 private suspend fun matchYoutubeSongForSaavn(
     source: SaavnAudioResolver.SaavnSearchResult,
 ): SongItem? {
+    val cleanedTitle = cleanupLookupTitle(source.title)
+    val primaryArtist = source.artists.firstOrNull().orEmpty().trim()
     val queries = linkedSetOf(
-        listOf(source.title, source.artists.firstOrNull().orEmpty(), source.albumName.orEmpty())
+        listOf(cleanedTitle, primaryArtist)
             .filter { it.isNotBlank() }
             .joinToString(" ")
             .trim(),
-        listOf(source.title, source.artists.firstOrNull().orEmpty())
+        listOf(source.title.trim(), primaryArtist)
             .filter { it.isNotBlank() }
             .joinToString(" ")
             .trim(),
-        source.title.trim(),
+        cleanedTitle.ifBlank { source.title.trim() },
     ).filter { it.isNotBlank() }
 
     if (queries.isEmpty()) return null
@@ -295,7 +297,7 @@ private suspend fun matchYoutubeSongForSaavn(
 
     return candidates.values
         .map { candidate -> candidate to youtubeSongMatchScore(source, candidate) }
-        .filter { (_, score) -> score >= 68 }
+        .filter { (_, score) -> score >= 82 }
         .maxByOrNull { it.second }
         ?.first
 }
@@ -368,4 +370,17 @@ private fun youtubeSongMatchScore(
     }
 
     return score
+}
+
+
+private fun cleanupLookupTitle(value: String): String {
+    val raw = value.trim()
+    if (raw.isBlank()) return raw
+    return raw
+        .replace(Regex("""\s*[\-–—]\s*(official|topic|vevo|records)\s*$""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|from .*?)\)""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|from .*?)\]""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\b(feat|featuring|ft)\b.*$""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
 }
