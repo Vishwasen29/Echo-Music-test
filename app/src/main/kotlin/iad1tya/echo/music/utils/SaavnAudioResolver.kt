@@ -18,6 +18,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
+    // SAAVN_RESOLUTION_RELIABILITY_PATCH_V1
+object SaavnAudioResolver {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -307,12 +309,13 @@ object SaavnAudioResolver {
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
         val title = mediaMetadata.title.trim()
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
-        val strippedTitle = normalizeTitleCore(title).ifBlank { title }
-        val titleVariants = titleLookupVariants(title, primaryArtist)
+        val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
+        val cleanedTitle = stripKnownArtistPartsFromTitle(title, listOf(primaryArtist, secondaryArtist)).ifBlank { title }
+        val normalizedTitle = normalizeTitleCore(cleanedTitle).ifBlank { cleanedTitle }
 
         val queries = linkedSetOf<String>()
 
-        fun add(titlePart: String, artistPart: String = primaryArtist) {
+        fun add(titlePart: String, artistPart: String) {
             val query = listOf(titlePart.trim(), artistPart.trim())
                 .filter { it.isNotBlank() }
                 .joinToString(" ")
@@ -320,12 +323,16 @@ object SaavnAudioResolver {
             if (query.isNotBlank()) queries += query
         }
 
-        titleVariants.forEach { add(it, primaryArtist) }
-        add(title, primaryArtist)
-        add(strippedTitle, primaryArtist)
-        add(title)
-        add(strippedTitle)
-
+        if (primaryArtist.isNotBlank()) {
+            add(cleanedTitle, primaryArtist)
+            add(normalizedTitle, primaryArtist)
+        }
+        if (secondaryArtist.isNotBlank() && primaryArtist.isBlank()) {
+            add(cleanedTitle, secondaryArtist)
+            add(normalizedTitle, secondaryArtist)
+        }
+        queries += cleanedTitle
+        if (normalizedTitle.isNotBlank()) queries += normalizedTitle
         return queries.toList()
     }
 
@@ -567,43 +574,30 @@ object SaavnAudioResolver {
             .replace("_150x150", "_500x500")
     }
     private fun parseArtists(json: JSONObject): List<String> {
-        val primaryArtists = linkedSetOf<String>()
-        val extraArtists = linkedSetOf<String>()
+        val artists = linkedSetOf<String>()
+
+        fun collect(raw: String?) {
+            splitArtistNames(raw).forEach { artists += it }
+        }
 
         val structured = json.optJSONObject("artists")
         if (structured != null) {
-            listOf("primary").forEach { key ->
+            listOf("primary", "featured", "all").forEach { key ->
                 val array = structured.optJSONArray(key) ?: return@forEach
                 for (index in 0 until array.length()) {
                     val artist = array.optJSONObject(index) ?: continue
-                    val name = artist.optString("name").trim()
-                    if (name.isNotBlank()) primaryArtists += name
-                }
-            }
-            listOf("featured", "all").forEach { key ->
-                val array = structured.optJSONArray(key) ?: return@forEach
-                for (index in 0 until array.length()) {
-                    val artist = array.optJSONObject(index) ?: continue
-                    val name = artist.optString("name").trim()
-                    if (name.isNotBlank()) extraArtists += name
+                    collect(artist.optString("name"))
                 }
             }
         }
 
-        listOf(
-            json.optString("primaryArtists"),
-            json.optString("primary_artists"),
-            json.optString("singers"),
-            json.optString("music"),
-            json.optString("artistMap"),
-            json.optString("artists").takeIf { json.opt("artists") is String } ?: "",
-        ).forEach { raw ->
-            raw.split(',', '&').map { it.trim() }.filter { it.isNotBlank() }.forEachIndexed { index, name ->
-                if (index == 0) primaryArtists += name else extraArtists += name
-            }
-        }
+        collect(json.optString("primaryArtists"))
+        collect(json.optString("primary_artists"))
+        collect(json.optString("singers"))
+        collect(json.optString("music"))
+        if (json.opt("artists") is String) collect(json.optString("artists"))
 
-        return (primaryArtists + extraArtists).toList()
+        return artists.toList()
     }
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
         val list = mutableListOf<DownloadLink>()
@@ -684,34 +678,29 @@ object SaavnAudioResolver {
         val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
         val requestedPrimaryArtist = requestedArtists.firstOrNull().orEmpty()
         if (requestedPrimaryArtist.isBlank()) return true
+        if (candidateArtists.isEmpty()) return false
 
-        val candidatePrimaryArtist = candidateArtists.firstOrNull().orEmpty()
+        if (candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }) return true
 
-        if (candidatePrimaryArtist.isBlank()) {
-            return candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
+        val requestedTokens = requestedPrimaryArtist.split(' ').filter { it.length > 1 }.toSet()
+        return candidateArtists.any { candidateArtist ->
+            val candidateTokens = candidateArtist.split(' ').filter { it.length > 1 }.toSet()
+            requestedTokens.isNotEmpty() && candidateTokens.isNotEmpty() &&
+                requestedTokens.intersect(candidateTokens).size >= minOf(2, requestedTokens.size)
         }
-
-        if (artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)) return true
-
-        val requestedPrimaryAppearsSomewhere = candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
-        if (!requestedPrimaryAppearsSomewhere) return false
-
-        // Allow reordered duet/collab credits, but reject tracks where a different singer is the
-        // primary artist and the requested primary artist only appears as a secondary/featured name.
-        return requestedArtists.any { wanted -> artistNamesMatch(candidatePrimaryArtist, wanted) }
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
         if (hasUnexpectedVariantTerms(candidate, requested.title)) return false
 
         val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
-        val requestedTitle = normalizeTitleCore(requested.title)
+        val requestedTitle = normalizeTitleCore(stripKnownArtistPartsFromTitle(requested.title, requested.artists.map { it.name }))
         val candidateTitle = normalizeTitleCore(candidate.title)
         val titleExact = candidateTitle == requestedTitle
         val titleStrong = titleExact ||
             candidateTitle.contains(requestedTitle) ||
             requestedTitle.contains(candidateTitle) ||
-            tokenSimilarity(candidateTitle, requestedTitle) >= 32
+            tokenSimilarity(candidateTitle, requestedTitle) >= 34
         val durationDiff = if (requested.duration > 0 && candidate.duration != null) {
             kotlin.math.abs(candidate.duration - requested.duration)
         } else {
@@ -719,19 +708,17 @@ object SaavnAudioResolver {
         }
         val durationClose = requested.duration <= 0 ||
             candidate.duration == null ||
-            durationDiff <= 20
+            durationDiff <= 18
 
-        if (requestedPrimaryArtist.isBlank()) {
-            return titleStrong && durationClose && score >= 88
+        return if (requestedPrimaryArtist.isBlank()) {
+            score >= 88 && titleStrong && durationClose
+        } else {
+            score >= 92 &&
+                titleStrong &&
+                durationClose &&
+                hasStrongPrimaryArtistMatch(candidate, requested) &&
+                (titleExact || durationDiff <= 10 || score >= 104)
         }
-
-        if (!hasStrongPrimaryArtistMatch(candidate, requested)) return false
-        if (titleExact && durationClose) return true
-
-        return score >= 94 &&
-            titleStrong &&
-            durationClose &&
-            (titleExact || durationDiff <= 12 || score >= 108)
     }
 
     private fun score(candidate: Candidate, requested: MediaMetadata): Int {
@@ -943,21 +930,59 @@ object SaavnAudioResolver {
         return ((overlap.toDouble() / denominator.toDouble()) * 55.0).roundToInt()
     }
 
+    private fun splitArtistNames(raw: String?): List<String> {
+        val value = raw?.trim().orEmpty()
+        if (value.isBlank()) return emptyList()
+        return value
+            .replace(Regex("""\b(feat|featuring|ft)\b"""), ",")
+            .replace("&", ",")
+            .replace(";", ",")
+            .replace("/", ",")
+            .replace(Regex("""\s+x\s+"""), ",")
+            .replace(Regex("""\s+and\s+"""), ",")
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+    }
+
+    private fun stripKnownArtistPartsFromTitle(title: String, candidateArtists: List<String>): String {
+        var value = title.trim()
+        if (value.isBlank()) return value
+
+        val separators = listOf(" - ", " | ", " : ")
+        for (separator in separators) {
+            val parts = value.split(separator)
+            if (parts.size != 2) continue
+            val left = normalizeArtist(parts[0])
+            val right = normalizeArtist(parts[1])
+            val knownArtists = candidateArtists.map(::normalizeArtist).filter { it.isNotBlank() }
+            val leftLooksArtist = left.isNotBlank() && (knownArtists.any { artistNamesMatch(it, left) } || splitArtistNames(parts[0]).size >= 2)
+            val rightLooksArtist = right.isNotBlank() && (knownArtists.any { artistNamesMatch(it, right) } || splitArtistNames(parts[1]).size >= 2)
+            value = when {
+                leftLooksArtist && !rightLooksArtist -> parts[1].trim()
+                rightLooksArtist && !leftLooksArtist -> parts[0].trim()
+                else -> value
+            }
+        }
+        return value
+    }
+
     private fun normalizeArtist(value: String): String {
         return normalizeBasic(value)
             .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
-            .replace(Regex("""\b(topic|official|vevo|records|music|channel)\b"""), " ")
+            .replace(Regex("""\b(topic|vevo|official|records|music video|audio)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
 
     private fun normalizeTitleCore(value: String): String {
-        return normalizeBasic(value)
-            .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?|prod .*?)\)"""), " ")
-            .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?|prod .*?)\]"""), " ")
+        val stripped = stripKnownArtistPartsFromTitle(value, emptyList())
+        return normalizeBasic(stripped)
+            .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"""), " ")
+            .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"""), " ")
             .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
-            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio|hd)\b"""), " ")
-            .replace(Regex("""\b\d{4} remaster(ed)?\b"""), " ")
+            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio|topic|vevo)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
