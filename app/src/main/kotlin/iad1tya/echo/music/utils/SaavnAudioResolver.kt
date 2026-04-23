@@ -1,5 +1,8 @@
 package iad1tya.echo.music.utils
 
+import javax.crypto.spec.SecretKeySpec
+import javax.crypto.Cipher
+import android.util.Base64
 import iad1tya.echo.music.constants.AudioQuality
 import iad1tya.echo.music.models.MediaMetadata
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +21,7 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
+    private const val SAAVN_EXTENSION_DES_KEY = "38346591"
     // Repaired by ChatGPT: faster exact title+artist resolution with stricter original-artist matching.
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(3, TimeUnit.SECONDS)
@@ -653,6 +657,8 @@ object SaavnAudioResolver {
     }
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
         val list = mutableListOf<DownloadLink>()
+        list += buildExtensionStyleDownloadLinks(json)
+
         val arrays = listOf(
             json.optJSONArray("downloadUrl"),
             json.optJSONArray("download_url"),
@@ -686,7 +692,10 @@ object SaavnAudioResolver {
             )
         }
 
-        return list.distinctBy { it.url }
+        return list
+            .mapNotNull { link -> normalizeDownloadUrl(link.url)?.let { cleaned -> link.copy(url = cleaned) } }
+            .sortedWith(compareByDescending<DownloadLink> { it.bitrate }.thenByDescending { it.quality.contains("320") })
+            .distinctBy { it.url }
     }
 
     private fun normalizeDownloadUrl(raw: String?): String? {
@@ -962,6 +971,65 @@ object SaavnAudioResolver {
             .replace("\\/", "/")
     }
 
+// ChatGPT patch: extension-style direct bitrate ladder from encrypted_media_url.
+    private fun buildExtensionStyleDownloadLinks(json: JSONObject): List<DownloadLink> {
+        val encryptedCandidates = listOf(
+            json.optString("encrypted_media_url").trim(),
+            json.optString("encryptedMediaUrl").trim(),
+            json.optString("encrypted_url").trim(),
+        ).filter { it.isNotBlank() }
+        if (encryptedCandidates.isEmpty()) return emptyList()
+
+        for (encrypted in encryptedCandidates) {
+            val decrypted = decryptExtensionStyleMediaUrl(encrypted) ?: continue
+            val ladder = buildExtensionStyleBitrateLadder(decrypted)
+            if (ladder.isNotEmpty()) return ladder
+        }
+
+        return emptyList()
+    }
+
+    private fun decryptExtensionStyleMediaUrl(rawEncrypted: String): String? {
+        val cleaned = decodeSaavnUrl(rawEncrypted).trim()
+        if (cleaned.isBlank()) return null
+
+        val decodedBytes = runCatching { Base64.decode(cleaned, Base64.DEFAULT) }.getOrNull()
+            ?: return normalizeDownloadUrl(cleaned)
+
+        val cipher = runCatching { Cipher.getInstance("DES/ECB/PKCS5Padding") }.getOrNull() ?: return null
+        val secretKey = SecretKeySpec(SAAVN_EXTENSION_DES_KEY.toByteArray(Charsets.UTF_8), "DES")
+        return runCatching {
+            cipher.init(Cipher.DECRYPT_MODE, secretKey)
+            val plain = String(cipher.doFinal(decodedBytes), Charsets.UTF_8).trim()
+            normalizeDownloadUrl(plain)
+        }.getOrNull()
+    }
+
+    private fun buildExtensionStyleBitrateLadder(baseUrl: String): List<DownloadLink> {
+        val normalized = normalizeDownloadUrl(baseUrl) ?: return emptyList()
+        val canonical96 = normalized
+            .replace("_320.mp4", "_96.mp4")
+            .replace("_160.mp4", "_96.mp4")
+            .replace("_48.mp4", "_96.mp4")
+
+        if (!canonical96.contains("_96.mp4", ignoreCase = true)) {
+            return listOf(
+                DownloadLink(
+                    quality = "source",
+                    url = normalized,
+                    bitrate = 96000,
+                )
+            )
+        }
+
+        return listOf(
+            DownloadLink("320kbps", canonical96.replace("_96.mp4", "_320.mp4"), 320000),
+            DownloadLink("160kbps", canonical96.replace("_96.mp4", "_160.mp4"), 160000),
+            DownloadLink("96kbps", canonical96, 96000),
+            DownloadLink("48kbps", canonical96.replace("_96.mp4", "_48.mp4"), 48000),
+        )
+    }
+
     private fun artistNamesMatch(left: String, right: String): Boolean {
         if (left == right) return true
 
@@ -1098,7 +1166,7 @@ object SaavnAudioResolver {
     private fun inferMimeType(url: String): String {
         val lower = url.lowercase(Locale.ROOT)
         return when {
-            lower.contains(".m4a") || lower.contains("mime=audio/mp4") -> "audio/mp4"
+            lower.contains(".m4a") || lower.contains(".mp4") || lower.contains("mime=audio/mp4") -> "audio/mp4"
             lower.contains(".aac") -> "audio/aac"
             else -> "audio/mpeg"
         }
