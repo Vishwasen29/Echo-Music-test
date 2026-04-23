@@ -1213,7 +1213,7 @@ class MusicService :
                         isPlaying = player.isPlaying,
                     )
                 }
-                delay(if (player.isPlaying) 15000L else 60000L)
+                delay(if (player.isPlaying) 20000L else 90000L)
             }
         }
         } catch (e: Exception) {
