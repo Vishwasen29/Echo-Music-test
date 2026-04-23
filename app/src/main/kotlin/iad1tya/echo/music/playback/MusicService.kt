@@ -576,6 +576,12 @@ class MusicService :
 
     private var lastPlaybackSpeed = 1.0f
 
+    private fun shouldUseSafeAudioPipelineWorkaround(): Boolean = Build.VERSION.SDK_INT >= 35
+
+    private fun shouldDisableAppLoudnessEnhancerWorkaround(): Boolean = shouldUseSafeAudioPipelineWorkaround()
+
+    private fun shouldDisableSpatialAndVirtualizerWorkaround(): Boolean = shouldUseSafeAudioPipelineWorkaround()
+
     val automixItems = MutableStateFlow<List<MediaItem>>(emptyList())
     data class SaavnSearchMatch(
         val title: String,
@@ -766,7 +772,7 @@ class MusicService :
                     sleepTimer = SleepTimer(scope, this)
                     addListener(sleepTimer)
                     addAnalyticsListener(PlaybackStatsListener(false, this@MusicService))
-                    setOffloadEnabled(dataStore.get(AudioOffload, false))
+                    setOffloadEnabled(if (shouldUseSafeAudioPipelineWorkaround()) false else dataStore.get(AudioOffload, false))
                 }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -1997,6 +2003,14 @@ class MusicService :
     }
 
     private fun setupLoudnessEnhancer() {
+        if (shouldDisableAppLoudnessEnhancerWorkaround()) {
+            if (loudnessEnhancer != null) {
+                releaseLoudnessEnhancer()
+            }
+            Log.w(TAG, "setupLoudnessEnhancer: disabled on Android 15/16 safe-audio workaround")
+            return
+        }
+
         val audioSessionId = player.audioSessionId
 
         if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) {
@@ -2106,15 +2120,15 @@ class MusicService :
         val bandLevels = decodeBandLevelsMb(dataStore.get(EqualizerBandLevelsMbKey, ""))
         val bassBoostEnabled = dataStore.get(EqualizerBassBoostEnabledKey, false)
         val bassBoostStrength = dataStore.get(EqualizerBassBoostStrengthKey, 0).coerceIn(0, 1000)
-        val virtualizerEnabled = dataStore.get(EqualizerVirtualizerEnabledKey, false)
+        val virtualizerEnabled = if (shouldDisableSpatialAndVirtualizerWorkaround()) false else dataStore.get(EqualizerVirtualizerEnabledKey, false)
         val virtualizerStrength = dataStore.get(EqualizerVirtualizerStrengthKey, 0).coerceIn(0, 1000)
         
         // Standard spatial audio
-        val spatialEnabled = dataStore.get(SpatialAudioEnabledKey, false)
+        val spatialEnabled = if (shouldDisableSpatialAndVirtualizerWorkaround()) false else dataStore.get(SpatialAudioEnabledKey, false)
         val spatialStrength = dataStore.get(SpatialAudioStrengthKey, 500).coerceIn(0, 1000)
         
         // Audio AR (Augmented Reality) - advanced spatial audio with device rotation tracking
-        val audioArEnabled = dataStore.get(AudioArEnabledKey, false)
+        val audioArEnabled = if (shouldDisableSpatialAndVirtualizerWorkaround()) false else dataStore.get(AudioArEnabledKey, false)
 
         try {
             if (equalizer == null) {
@@ -2243,7 +2257,7 @@ class MusicService :
         if (virtualizer == null) {
             virtualizer = runCatching { Virtualizer(0, sessionId) }.getOrNull()
         }
-        if (loudnessEnhancer == null) {
+        if (!shouldDisableAppLoudnessEnhancerWorkaround() && loudnessEnhancer == null) {
             loudnessEnhancer = runCatching { LoudnessEnhancer(sessionId) }.getOrNull()
         }
 
@@ -3463,6 +3477,7 @@ class MusicService :
                 val nextItem = player.getMediaItemAt(nextIndex)
                 val fp = ExoPlayer.Builder(this)
                     .setMediaSourceFactory(createMediaSourceFactory())
+                    .setRenderersFactory(createRenderersFactory())
                     .setAudioAttributes(
                         AudioAttributes.Builder()
                             .setUsage(C.USAGE_MEDIA)
@@ -3471,6 +3486,9 @@ class MusicService :
                         false
                     )
                     .build()
+                    .apply {
+                        setOffloadEnabled(if (shouldUseSafeAudioPipelineWorkaround()) false else dataStore.get(AudioOffload, false))
+                    }
                 fp.volume = 0f
                 fp.setMediaItem(nextItem)
                 fp.prepare()
