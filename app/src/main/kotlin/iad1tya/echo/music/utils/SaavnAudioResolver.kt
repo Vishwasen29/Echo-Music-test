@@ -753,7 +753,7 @@ object SaavnAudioResolver {
             hasStrongPrimaryArtistMatch(candidate, requested) &&
                 titleStrong &&
                 durationClose &&
-                score >= if (titleExact) 118 else 126 &&
+                score >= (if (titleExact) 118 else 126) &&
                 (titleExact || durationDiff <= 8 || score >= 136)
         }
     }
