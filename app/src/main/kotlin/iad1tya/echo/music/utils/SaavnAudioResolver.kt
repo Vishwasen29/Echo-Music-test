@@ -19,9 +19,9 @@ import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(7, TimeUnit.SECONDS)
-        .callTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(3, TimeUnit.SECONDS)
+        .callTimeout(4, TimeUnit.SECONDS)
         .build()
 
     private val baseUrls = listOf(
@@ -388,60 +388,61 @@ object SaavnAudioResolver {
     }
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
-        val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
-        val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
-        val album = mediaMetadata.album?.title?.trim().orEmpty()
-        val cleanedTitle = cleanTitleForLookup(mediaMetadata.title, primaryArtist)
-        val normalizedTitle = normalizeTitleCore(cleanedTitle).ifBlank { cleanedTitle }
+        // FAST_SIMPLE_LOOKUP_SAAVN_PATCH_V1
+        val rawTitle = mediaMetadata.title.trim()
+        if (rawTitle.isBlank()) return emptyList()
 
+        val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
+        val cleanedTitle = normalizeTitleCore(rawTitle).ifBlank { rawTitle }
         val queries = linkedSetOf<String>()
 
-        fun add(vararg parts: String) {
-            val query = parts
-                .map { it.trim() }
+        fun add(title: String, artist: String) {
+            val query = listOf(title.trim(), artist.trim())
                 .filter { it.isNotBlank() }
                 .joinToString(" ")
-                .replace(Regex("""\s+"""), " ")
                 .trim()
             if (query.isNotBlank()) queries += query
         }
 
-        add(cleanedTitle, primaryArtist)
-        add(normalizedTitle, primaryArtist)
-        add(cleanedTitle, album, primaryArtist)
-        add(normalizedTitle, album, primaryArtist)
-        if (secondaryArtist.isNotBlank()) {
-            add(cleanedTitle, primaryArtist, secondaryArtist)
+        if (primaryArtist.isNotBlank()) {
+            add(rawTitle, primaryArtist)
+            if (!cleanedTitle.equals(rawTitle, ignoreCase = true)) {
+                add(cleanedTitle, primaryArtist)
+            }
+        } else {
+            queries += rawTitle
+            if (!cleanedTitle.equals(rawTitle, ignoreCase = true)) {
+                queries += cleanedTitle
+            }
         }
-        add(cleanedTitle)
-        add(normalizedTitle)
 
-        return queries.take(RESOLVE_QUERY_LIMIT)
+        return queries.take(2)
     }
 
     private fun search(query: String): List<Candidate> {
         searchCache[query]?.let { return it }
+        if (query.isBlank()) return emptyList()
 
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
-        val orderedRequests = listOf(
-            baseUrls[0].trimEnd('/') + searchPaths[0] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            baseUrls[0].trimEnd('/') + searchPaths[1] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            baseUrls[0].trimEnd('/') + searchPaths[0] + "?q=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            baseUrls[1].trimEnd('/') + searchPaths[0] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-            baseUrls[1].trimEnd('/') + searchPaths[1] + "?query=$encoded&limit=$RESOLVE_RESULT_LIMIT",
-        )
-        val all = linkedMapOf<String, Candidate>()
-
-        for (url in orderedRequests) {
-            val json = fetchJson(url) ?: continue
-            parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-            if (all.size >= RESOLVE_RESULT_LIMIT) break
-            if (all.size >= 3) break
+        val requestUrls = buildList {
+            baseUrls.forEach { base ->
+                add(base.trimEnd('/') + "/api/search/songs?query=" + encoded + "&limit=3")
+            }
         }
 
-        val results = all.values.take(RESOLVE_RESULT_LIMIT)
-        putBoundedCache(searchCache, query, results, maxSize = 64)
-        return results
+        for (url in requestUrls) {
+            val json = fetchJson(url) ?: continue
+            val results = parseCandidates(json)
+                .distinctBy { it.id }
+                .take(3)
+            if (results.isNotEmpty()) {
+                putBoundedCache(searchCache, query, results, maxSize = 64)
+                return results
+            }
+        }
+
+        putBoundedCache(searchCache, query, emptyList(), maxSize = 64)
+        return emptyList()
     }
 
     private fun fetchSong(songId: String): Candidate? {
