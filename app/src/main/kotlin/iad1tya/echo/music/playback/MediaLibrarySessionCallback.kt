@@ -37,6 +37,7 @@ import iad1tya.echo.music.extensions.toggleRepeatMode
 import iad1tya.echo.music.extensions.metadata
 import iad1tya.echo.music.models.toMediaMetadata
 import iad1tya.echo.music.playback.queues.ListQueue
+import iad1tya.echo.music.utils.SaavnAudioResolver
 import iad1tya.echo.music.utils.dataStore
 import iad1tya.echo.music.utils.get
 import iad1tya.echo.music.utils.reportException
@@ -368,6 +369,44 @@ constructor(
                 }
 
                 try {
+                    val saavnResults = SaavnAudioResolver.searchSongs(query, 8)
+                        .getOrNull()
+                        .orEmpty()
+
+                    saavnResults.forEach { saavn ->
+                        val mediaId = "${MusicService.SEARCH}/$query/saavn:${saavn.sourceSongId}"
+                        val artistLine = saavn.artists.joinToString(", ").ifBlank { "JioSaavn" }
+                        val duplicateLocal = allLocalSongs.any { localSong ->
+                            localSong.song.title.equals(saavn.title, ignoreCase = true) &&
+                                localSong.artists.any { artist ->
+                                    saavn.artists.any { saavnArtist ->
+                                        saavnArtist.equals(artist.name, ignoreCase = true)
+                                    }
+                                }
+                        }
+                        if (!duplicateLocal) {
+                            searchResults.add(
+                                MediaItem.Builder()
+                                    .setMediaId(mediaId)
+                                    .setUri("echo://saavn/${saavn.sourceSongId}".toUri())
+                                    .setCustomCacheKey(mediaId)
+                                    .setMediaMetadata(
+                                        MediaMetadata.Builder()
+                                            .setTitle(saavn.title)
+                                            .setSubtitle(artistLine)
+                                            .setArtist(artistLine)
+                                            .setAlbumTitle(saavn.albumName)
+                                            .setArtworkUri(saavn.thumbnailUrl?.toUri())
+                                            .setIsPlayable(true)
+                                            .setIsBrowsable(true)
+                                            .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                                            .build()
+                                    )
+                                    .build()
+                            )
+                        }
+                    }
+
                     val onlineResults = YouTube.search(query, YouTube.SearchFilter.FILTER_SONG)
                         .getOrNull()
                         ?.items
@@ -378,8 +417,8 @@ constructor(
                                 localSong.id == onlineSong.id ||
                                 (localSong.song.title.equals(onlineSong.title, ignoreCase = true) &&
                                  localSong.artists.any { artist ->
-                                     onlineSong.artists?.any { 
-                                         it.name.equals(artist.name, ignoreCase = true) 
+                                     onlineSong.artists?.any {
+                                         it.name.equals(artist.name, ignoreCase = true)
                                      } == true
                                  })
                             }
@@ -390,7 +429,7 @@ constructor(
                             database.query { insert(songItem.toMediaMetadata()) }
                         } catch (e: Exception) {
                         }
-                        
+
                         searchResults.add(
                             MediaItem.Builder()
                                 .setMediaId("${MusicService.SEARCH}/$query/${songItem.id}")
@@ -501,7 +540,11 @@ constructor(
                 MusicService.SEARCH -> {
                     val songId = path.getOrNull(2) ?: return@future defaultResult
                     val searchQuery = path.getOrNull(1) ?: return@future defaultResult
-                    
+
+                    if (songId.startsWith("saavn:")) {
+                        return@future MediaItemsWithStartPosition(mediaItems, 0, startPositionMs)
+                    }
+
                     val searchResults = mutableListOf<Song>()
 
                     val localSongs = database.allSongs().first().filter { song ->

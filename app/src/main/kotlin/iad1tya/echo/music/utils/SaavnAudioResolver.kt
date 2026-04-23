@@ -255,11 +255,17 @@ object SaavnAudioResolver {
         runCatching {
             if (query.isBlank()) return@runCatching emptyList()
 
-            val deduped = search(query)
-                .distinctBy { it.id }
+            val all = linkedMapOf<String, Candidate>()
+            buildSearchQueries(query).forEach { variant ->
+                search(variant).forEach { candidate ->
+                    all.putIfAbsent(candidate.id, candidate)
+                }
+                if (all.size >= 10) return@forEach
+            }
 
+            val deduped = all.values.toList()
             val filtered = deduped.filter { candidate ->
-                !hasUnexpectedVariantTerms(candidate, query) || saavnSearchScore(candidate, query) >= 90
+                !hasUnexpectedVariantTerms(candidate, query) || saavnSearchScore(candidate, query) >= 92
             }
 
             val candidates = if (filtered.isNotEmpty()) filtered else deduped
@@ -285,26 +291,76 @@ object SaavnAudioResolver {
         }
     }
 
+    private fun buildSearchQueries(query: String): List<String> {
+        val raw = query.trim()
+        if (raw.isBlank()) return emptyList()
+
+        val queries = linkedSetOf<String>()
+        fun add(value: String) {
+            val cleaned = value.trim()
+            if (cleaned.isNotBlank()) queries += cleaned
+        }
+
+        add(raw)
+        add(normalizeTitleCore(raw))
+
+        val dashed = raw.split(Regex("""\s[-–—]\s"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+        if (dashed.size >= 2) {
+            add(dashed.joinToString(" "))
+            add(dashed.reversed().joinToString(" "))
+        }
+
+        val noBracket = raw
+            .replace(Regex("""\([^)]*\)"""), " ")
+            .replace(Regex("""\[[^\]]*\]"""), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+        add(noBracket)
+        add(normalizeTitleCore(noBracket))
+
+        return queries.take(5).toList()
+    }
 
     private fun saavnSearchScore(candidate: Candidate, query: String): Int {
         val normalizedQuery = normalizeTitleCore(query)
         val normalizedTitle = normalizeTitleCore(candidate.title)
         val artistText = candidate.artists.joinToString(" ") { normalizeArtist(it) }
+        val queryArtistText = normalizeArtist(query)
+        val queryScript = dominantScript(query)
         var score = 0
 
         score += when {
-            normalizedTitle == normalizedQuery -> 150
-            normalizedQuery.contains(normalizedTitle) || normalizedTitle.contains(normalizedQuery) -> 90
+            normalizedTitle == normalizedQuery -> 170
+            normalizedQuery.contains(normalizedTitle) || normalizedTitle.contains(normalizedQuery) -> 105
             else -> tokenSimilarity(normalizedTitle, normalizedQuery)
         }
 
         val queryTokens = normalizedQuery.split(' ').filter { it.length > 1 }.toSet()
         val artistTokens = artistText.split(' ').filter { it.length > 1 }.toSet()
-        score += queryTokens.intersect(artistTokens).size * 24
+        score += queryTokens.intersect(artistTokens).size * 28
+
+        if (queryArtistText.isNotBlank()) {
+            val normalizedArtists = candidate.artists.map(::normalizeArtist)
+            if (normalizedArtists.any { artistNamesMatch(it, queryArtistText) }) {
+                score += 28
+            }
+        }
+
+        if (queryScript == ScriptFamily.LATIN) {
+            score += when (normalizeLanguage(candidate.language.orEmpty())) {
+                "english" -> 26
+                "hindi", "punjabi", "tamil", "telugu", "bengali", "marathi", "gujarati", "malayalam", "kannada" -> -34
+                else -> 0
+            }
+        }
+
         score += qualityScore(candidate.downloadLinks) / 10000
         score += penaltyScore(candidate, normalizedQuery)
         return score
     }
+
 
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
         val rawTitle = mediaMetadata.title.trim()
@@ -322,6 +378,15 @@ object SaavnAudioResolver {
         if (primaryArtist.isNotBlank()) {
             add(lookupTitle, primaryArtist)
             add(cleanedLookupTitle, primaryArtist)
+
+            val bracketFreeTitle = rawTitle
+                .replace(Regex("""\([^)]*\)"""), " ")
+                .replace(Regex("""\[[^\]]*\]"""), " ")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+            if (bracketFreeTitle.isNotBlank() && !bracketFreeTitle.equals(lookupTitle, ignoreCase = true)) {
+                add(bracketFreeTitle, primaryArtist)
+            }
             if (!rawTitle.equals(lookupTitle, ignoreCase = true)) {
                 add(rawTitle, primaryArtist)
             }
@@ -330,25 +395,28 @@ object SaavnAudioResolver {
             add(cleanedLookupTitle)
         }
 
-        return queries.take(3).toList()
+        return queries.take(4).toList()
     }
 
     private fun search(query: String): List<Candidate> {
         searchCache[query]?.let { return it }
 
         val encoded = URLEncoder.encode(query, Charsets.UTF_8.name())
+        val isLatinQuery = dominantScript(query) == ScriptFamily.LATIN
+        val perRequestLimit = if (isLatinQuery) 10 else 6
+        val targetCount = if (isLatinQuery) 8 else 4
         val paramVariants = listOf(
-            "query=$encoded&limit=6",
-            "q=$encoded&limit=6",
+            "query=$encoded&limit=$perRequestLimit",
+            "q=$encoded&limit=$perRequestLimit",
         )
         val all = linkedMapOf<String, Candidate>()
         outer@ for (base in baseUrls) {
-            for (path in searchPaths) {
+            for (pathVariant in searchPaths) {
                 for (params in paramVariants) {
-                    val url = base.trimEnd('/') + path + "?" + params
+                    val url = base.trimEnd('/') + pathVariant + "?" + params
                     val json = fetchJson(url) ?: continue
                     parseCandidates(json).forEach { all.putIfAbsent(it.id, it) }
-                    if (all.size >= 4) break@outer
+                    if (all.size >= targetCount) break@outer
                 }
             }
         }
@@ -790,8 +858,8 @@ object SaavnAudioResolver {
         if (normalizedLanguage.isBlank()) return 0
         return when (requestedTitleScript) {
             ScriptFamily.LATIN -> when (normalizedLanguage) {
-                "english" -> 14
-                "hindi", "punjabi", "tamil", "telugu", "bengali", "marathi", "gujarati", "malayalam", "kannada" -> -18
+                "english" -> 26
+                "hindi", "punjabi", "tamil", "telugu", "bengali", "marathi", "gujarati", "malayalam", "kannada" -> -34
                 else -> 0
             }
             ScriptFamily.DEVANAGARI -> if (normalizedLanguage in setOf("hindi", "marathi", "nepali", "sanskrit")) 8 else 0
@@ -917,8 +985,8 @@ object SaavnAudioResolver {
 
     private fun normalizeArtist(value: String): String {
         return normalizeBasic(value)
-            .replace(Regex("""(feat|featuring|ft).*$"""), " ")
-            .replace(Regex("""(topic|vevo|official|records|music|lyrics|lyric|audio|video|visualizer)"""), " ")
+            .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
+            .replace(Regex("""\b(topic|vevo|official|records|music|lyrics|lyric|audio|video|visualizer)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
@@ -927,8 +995,8 @@ object SaavnAudioResolver {
         return normalizeBasic(value)
             .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"""), " ")
             .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"""), " ")
-            .replace(Regex("""(feat|featuring|ft).*$"""), " ")
-            .replace(Regex("""(song|full song|official music video|official video|lyric video|audio)"""), " ")
+            .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
+            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
