@@ -11,21 +11,17 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.net.URLDecoder
 import java.text.Normalizer
-import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import javax.crypto.Cipher
-import javax.crypto.spec.SecretKeySpec
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
 object SaavnAudioResolver {
-    private const val SAAVN_DES_KEY = "38346591"
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(4, TimeUnit.SECONDS)
-        .readTimeout(6, TimeUnit.SECONDS)
-        .callTimeout(8, TimeUnit.SECONDS)
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private val baseUrls = listOf(
@@ -310,7 +306,6 @@ object SaavnAudioResolver {
         return score
     }
 
-
     private fun buildQueries(mediaMetadata: MediaMetadata): List<String> {
         val primaryArtist = mediaMetadata.artists.firstOrNull()?.name?.trim().orEmpty()
         val secondaryArtist = mediaMetadata.artists.getOrNull(1)?.name?.trim().orEmpty()
@@ -342,7 +337,6 @@ object SaavnAudioResolver {
 
         return queries.toList().take(QUERY_VARIANT_LIMIT)
     }
-
 
 
 
@@ -637,7 +631,6 @@ object SaavnAudioResolver {
 
         return (primaryArtists + extraArtists).toList()
     }
-
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
         val list = mutableListOf<DownloadLink>()
         val arrays = listOf(
@@ -657,14 +650,6 @@ object SaavnAudioResolver {
                     bitrate = parseBitrate(quality),
                 )
             }
-        }
-
-        val encryptedCandidates = listOfNotNull(
-            json.optString("encrypted_media_url").takeIf { it.isNotBlank() },
-            json.optJSONObject("more_info")?.optString("encrypted_media_url")?.takeIf { it.isNotBlank() },
-        )
-        encryptedCandidates.forEach { encrypted ->
-            list += decryptEncryptedMediaLadder(encrypted)
         }
 
         val directCandidates = listOf(
@@ -720,7 +705,6 @@ object SaavnAudioResolver {
 
     private fun qualityScore(links: List<DownloadLink>): Int = links.maxOfOrNull { it.bitrate } ?: 0
 
-
     private fun hasStrongPrimaryArtistMatch(candidate: Candidate, requested: MediaMetadata): Boolean {
         val requestedArtists = requested.artists.map { normalizeArtist(it.name) }.filter { it.isNotBlank() }
         val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
@@ -741,7 +725,6 @@ object SaavnAudioResolver {
 
         return requestedArtists.any { wanted -> artistNamesMatch(candidatePrimaryArtist, wanted) }
     }
-
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
         val requestedLookupTitle = buildLookupTitles(requested).firstOrNull().orEmpty().ifBlank { requested.title }
@@ -774,7 +757,6 @@ object SaavnAudioResolver {
                 (titleExact || durationDiff <= 8 || score >= 136)
         }
     }
-
 
     private fun score(candidate: Candidate, requested: MediaMetadata): Int {
         val requestedTitleRaw = buildLookupTitles(requested).firstOrNull().orEmpty().ifBlank { requested.title.trim() }
@@ -861,7 +843,6 @@ object SaavnAudioResolver {
         return score
     }
 
-
     private fun languageHintScore(candidate: Candidate, requestedTitleScript: ScriptFamily): Int {
         val normalizedLanguage = normalizeLanguage(candidate.language.orEmpty())
         if (normalizedLanguage.isBlank()) return 0
@@ -883,14 +864,12 @@ object SaavnAudioResolver {
         }
     }
 
-
     private fun penaltyScore(candidate: Candidate, requestedTitle: String): Int {
         val requestedPenaltyTerms = extractPenaltyTerms(requestedTitle)
         val candidateTerms = extractPenaltyTerms(
             normalizeTitleCore(candidate.title) + " " +
                 normalizeTitleCore(candidate.albumName.orEmpty()) + " " +
-                candidate.artists.joinToString(" ") { normalizeArtist(it) } + " " +
-                normalizeLanguage(candidate.language.orEmpty())
+                candidate.artists.joinToString(" ") { normalizeArtist(it) }
         )
         val extraTerms = candidateTerms - requestedPenaltyTerms
         var score = 0
@@ -905,10 +884,8 @@ object SaavnAudioResolver {
         if ("nightcore" in extraTerms || "lofi" in extraTerms || "lo fi" in extraTerms) score -= 90
         if ("dj" in extraTerms || "mix" in extraTerms) score -= 60
         if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 90
-        if ("dubbed" in extraTerms || "hindi" in extraTerms) score -= 110
         return score
     }
-
 
     private fun extractPenaltyTerms(text: String): Set<String> {
         val normalized = normalizeTitleCore(text)
@@ -934,8 +911,6 @@ object SaavnAudioResolver {
             "devotional",
             "bhajan",
             "aarti",
-            "dubbed",
-            "hindi",
         ).forEach { term ->
             if (normalized.contains(term)) terms += term
         }
@@ -998,7 +973,6 @@ object SaavnAudioResolver {
         return ((overlap.toDouble() / denominator.toDouble()) * 55.0).roundToInt()
     }
 
-
     private fun normalizeArtist(value: String): String {
         val cleaned = value
             .replace(Regex("""(?i)\b(auto generated by youtube|official artist channel)\b"""), " ")
@@ -1012,13 +986,12 @@ object SaavnAudioResolver {
             .trim()
     }
 
-
     private fun normalizeTitleCore(value: String): String {
-        return normalizeBasic(extractLookupTitle(value, ""))
-            .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?|hindi dubbed|dubbed)\)"""), " ")
-            .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?|hindi dubbed|dubbed)\]"""), " ")
+        return normalizeBasic(value)
+            .replace(Regex("""\((official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\)"""), " ")
+            .replace(Regex("""\[(official|lyric|lyrics|audio|video|visualizer|remaster|version|from .*?)\]"""), " ")
             .replace(Regex("""\b(feat|featuring|ft)\b.*$"""), " ")
-            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio|hindi dubbed|dubbed version)\b"""), " ")
+            .replace(Regex("""\b(song|full song|official music video|official video|lyric video|audio)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
     }
@@ -1031,58 +1004,6 @@ object SaavnAudioResolver {
             .replace(Regex("""[^\p{L}\p{N} ]"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
-    }
-
-
-    private fun extractLookupTitle(value: String, primaryArtist: String): String {
-        val raw = value.trim()
-        if (raw.isBlank()) return raw
-
-        val separators = listOf(" - ", " – ", " — ", " | ", ": ")
-        for (separator in separators) {
-            val parts = raw.split(separator)
-                .map { it.trim() }
-                .filter { it.isNotBlank() }
-            if (parts.size == 2) {
-                val left = parts[0]
-                val right = parts[1]
-                val normalizedArtist = normalizeArtist(primaryArtist)
-                val leftLooksLikeArtist = normalizedArtist.isNotBlank() &&
-                    artistNamesMatch(normalizeArtist(left), normalizedArtist)
-                val rightLooksLikeArtist = normalizedArtist.isNotBlank() &&
-                    artistNamesMatch(normalizeArtist(right), normalizedArtist)
-                return when {
-                    leftLooksLikeArtist && !rightLooksLikeArtist -> right
-                    rightLooksLikeArtist && !leftLooksLikeArtist -> left
-                    else -> raw
-                }
-            }
-        }
-        return raw
-    }
-
-    private fun decryptEncryptedMediaLadder(value: String): List<DownloadLink> {
-        val direct = runCatching {
-            val cipher = Cipher.getInstance("DES/ECB/PKCS5Padding")
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(SAAVN_DES_KEY.toByteArray(Charsets.UTF_8), "DES"))
-            val decoded = Base64.getDecoder().decode(value.trim())
-            cipher.doFinal(decoded).toString(Charsets.UTF_8)
-        }.getOrNull() ?: return emptyList()
-
-        val cleaned = normalizeDownloadUrl(direct) ?: return emptyList()
-        val ladder = linkedMapOf(
-            "320kbps" to cleaned.replace("_96.mp4", "_320.mp4").replace("_160.mp4", "_320.mp4").replace("_48.mp4", "_320.mp4"),
-            "160kbps" to cleaned.replace("_96.mp4", "_160.mp4").replace("_320.mp4", "_160.mp4").replace("_48.mp4", "_160.mp4"),
-            "96kbps" to cleaned.replace("_160.mp4", "_96.mp4").replace("_320.mp4", "_96.mp4").replace("_48.mp4", "_96.mp4"),
-            "48kbps" to cleaned.replace("_96.mp4", "_48.mp4").replace("_160.mp4", "_48.mp4").replace("_320.mp4", "_48.mp4"),
-        )
-        return ladder.map { (quality, url) ->
-            DownloadLink(
-                quality = quality,
-                url = url,
-                bitrate = parseBitrate(quality),
-            )
-        }.distinctBy { it.url }
     }
 
     private fun normalizeLanguage(value: String): String {
@@ -1141,11 +1062,10 @@ object SaavnAudioResolver {
         return number * 1000
     }
 
-
     private fun inferMimeType(url: String): String {
         val lower = url.lowercase(Locale.ROOT)
         return when {
-            lower.contains(".m4a") || lower.contains(".mp4") || lower.contains("mime=audio/mp4") -> "audio/mp4"
+            lower.contains(".m4a") || lower.contains("mime=audio/mp4") -> "audio/mp4"
             lower.contains(".aac") -> "audio/aac"
             else -> "audio/mpeg"
         }
