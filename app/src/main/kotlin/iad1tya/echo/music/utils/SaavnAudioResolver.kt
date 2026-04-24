@@ -272,19 +272,23 @@ object SaavnAudioResolver {
                 )
                 .take(limit)
                 .map { candidate ->
+                    val hydrated = if (candidate.thumbnailUrl.isNullOrBlank() || candidate.albumName.isNullOrBlank()) {
+                        fetchSong(candidate.id) ?: candidate
+                    } else {
+                        candidate
+                    }
                     SaavnSearchResult(
                         sourceSongId = candidate.id,
                         title = candidate.title,
                         artists = candidate.artists,
                         duration = candidate.duration,
                         language = candidate.language,
-                        albumName = candidate.albumName,
-                        thumbnailUrl = candidate.thumbnailUrl,
+                        albumName = hydrated.albumName ?: candidate.albumName,
+                        thumbnailUrl = hydrated.thumbnailUrl ?: candidate.thumbnailUrl,
                     )
                 }
         }
     }
-
 
     private fun saavnSearchScore(candidate: Candidate, query: String): Int {
         val normalizedQuery = normalizeTitleCore(query)
@@ -549,49 +553,108 @@ object SaavnAudioResolver {
 
 
     private fun parseThumbnail(json: JSONObject): String? {
-        val direct = listOf(
+        fun firstValid(vararg values: String?): String? = values
+            .asSequence()
+            .mapNotNull { normalizeImageUrl(it) }
+            .firstOrNull()
+
+        firstValid(
             json.optString("image"),
             json.optString("thumbnail"),
             json.optString("thumbnailUrl"),
-        ).map { it.trim() }.firstOrNull { it.isNotBlank() }
-        if (!direct.isNullOrBlank()) return upgradeImageUrl(direct)
+            json.optString("imageUrl"),
+            json.optString("cover"),
+        )?.let { return it }
 
-        val imageObject = json.optJSONObject("image")
-        if (imageObject != null) {
-            listOf(
-                imageObject.optString("url"),
-                imageObject.optString("link"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(it) }
+        listOf(
+            json.optJSONObject("image"),
+            json.optJSONObject("thumbnail"),
+            json.optJSONObject("more_info"),
+            json.optJSONObject("moreInfo"),
+        ).forEach { obj ->
+            if (obj == null) return@forEach
+            firstValid(
+                obj.optString("url"),
+                obj.optString("link"),
+                obj.optString("image"),
+                obj.optString("thumbnail"),
+                obj.optString("thumbnailUrl"),
+            )?.let { return it }
         }
 
-        val imageArray = json.optJSONArray("image")
-        if (imageArray != null) {
-            for (index in imageArray.length() - 1 downTo 0) {
-                val item = imageArray.optJSONObject(index) ?: continue
-                val url = item.optString("url").trim()
-                if (url.isNotBlank()) return upgradeImageUrl(url)
+        listOf(
+            json.optJSONArray("image"),
+            json.optJSONArray("images"),
+            json.optJSONArray("thumbnail"),
+        ).forEach { array ->
+            if (array == null) return@forEach
+            for (index in array.length() - 1 downTo 0) {
+                val itemObject = array.optJSONObject(index)
+                if (itemObject != null) {
+                    firstValid(
+                        itemObject.optString("url"),
+                        itemObject.optString("link"),
+                        itemObject.optString("image"),
+                        itemObject.optString("thumbnail"),
+                    )?.let { return it }
+                }
+                normalizeImageUrl(array.optString(index))?.let { return it }
             }
         }
 
         val albumObject = json.optJSONObject("album")
         if (albumObject != null) {
-            listOf(
+            firstValid(
                 albumObject.optString("image"),
                 albumObject.optString("thumbnail"),
                 albumObject.optString("thumbnailUrl"),
-            ).map { it.trim() }.firstOrNull { it.isNotBlank() }?.let { return upgradeImageUrl(it) }
+                albumObject.optJSONObject("image")?.optString("url"),
+                albumObject.optJSONObject("image")?.optString("link"),
+            )?.let { return it }
+
+            val albumImageArray = albumObject.optJSONArray("image")
+            if (albumImageArray != null) {
+                for (index in albumImageArray.length() - 1 downTo 0) {
+                    val itemObject = albumImageArray.optJSONObject(index)
+                    if (itemObject != null) {
+                        firstValid(
+                            itemObject.optString("url"),
+                            itemObject.optString("link"),
+                            itemObject.optString("image"),
+                        )?.let { return it }
+                    }
+                    normalizeImageUrl(albumImageArray.optString(index))?.let { return it }
+                }
+            }
         }
 
         return null
     }
 
+    private fun normalizeImageUrl(raw: String?): String? {
+        var value = raw?.trim().orEmpty()
+        if (value.isBlank()) return null
+        value = value.replace("\\/", "/").replace("&amp;", "&")
+        repeat(2) {
+            value = runCatching { URLDecoder.decode(value, "UTF-8") }.getOrDefault(value)
+        }
+        if (value.startsWith("//")) value = "https:$value"
+        if (!value.startsWith("http://") && !value.startsWith("https://")) return null
+        return upgradeImageUrl(value)
+    }
+
     private fun upgradeImageUrl(value: String): String {
         return value
             .replace("50x50", "500x500")
+            .replace("60x60", "500x500")
+            .replace("80x80", "500x500")
             .replace("150x150", "500x500")
             .replace("_50x50", "_500x500")
+            .replace("_60x60", "_500x500")
+            .replace("_80x80", "_500x500")
             .replace("_150x150", "_500x500")
     }
+
     private fun parseArtists(json: JSONObject): List<String> {
         val primaryArtists = linkedSetOf<String>()
         val extraArtists = linkedSetOf<String>()

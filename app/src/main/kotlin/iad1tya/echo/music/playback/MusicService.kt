@@ -541,6 +541,41 @@ class MusicService :
         )
     }
 
+    // CHATGPT_SAAVN_ARTWORK_REFRESH_START
+    private suspend fun applyResolvedSaavnMetadataToQueue(
+        mediaId: String,
+        saavnMetadata: iad1tya.echo.music.models.MediaMetadata,
+    ) {
+        withContext(Dispatchers.Main) {
+            val playerItemMetadata = androidx.media3.common.MediaMetadata.Builder()
+                .setTitle(saavnMetadata.title)
+                .setSubtitle(saavnMetadata.artists.joinToString { it.name })
+                .setArtist(saavnMetadata.artists.joinToString { it.name })
+                .setArtworkUri(saavnMetadata.thumbnailUrl?.toUri())
+                .setAlbumTitle(saavnMetadata.album?.title)
+                .setMediaType(androidx.media3.common.MediaMetadata.MEDIA_TYPE_MUSIC)
+                .build()
+
+            val itemIndex = (0 until player.mediaItemCount).firstOrNull { index ->
+                player.getMediaItemAt(index).mediaId == mediaId
+            }
+            if (itemIndex != null) {
+                val updatedItem = player.getMediaItemAt(itemIndex)
+                    .buildUpon()
+                    .setTag(saavnMetadata)
+                    .setMediaMetadata(playerItemMetadata)
+                    .build()
+                player.replaceMediaItem(itemIndex, updatedItem)
+            }
+
+            if (player.currentMediaItem?.mediaId == mediaId) {
+                currentMediaMetadata.value = saavnMetadata
+                updateNotification()
+            }
+        }
+    }
+    // CHATGPT_SAAVN_ARTWORK_REFRESH_END
+
     val playerVolume = MutableStateFlow(1f)
     val eqCapabilities = MutableStateFlow<EqCapabilities?>(null)
 
@@ -3718,7 +3753,9 @@ class MusicService :
                 detail = "Matched ${resolved.matchedTitle} • ${resolved.matchedArtists.joinToString().ifBlank { "artist unknown" }}",
             )
             Log.d("MusicService", "JioSaavn matched for $mediaId -> ${resolved.matchedTitle} / ${resolved.matchedArtists.joinToString()}")
-            persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = resolveMetadataForMediaId(mediaId), resolved = resolved))
+            val saavnMetadata = buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = resolveMetadataForMediaId(mediaId), resolved = resolved)
+            persistSaavnMetadata(mediaId, saavnMetadata)
+            applyResolvedSaavnMetadataToQueue(mediaId, saavnMetadata)
             val bitrate = resolved.bitrate ?: when (audioQuality) {
                 iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
                 iad1tya.echo.music.constants.AudioQuality.AUTO,
@@ -3778,7 +3815,9 @@ class MusicService :
             detail = "Matched ${resolved.matchedTitle} • ${resolved.matchedArtists.joinToString().ifBlank { "artist unknown" }}",
         )
         Log.d("MusicService", "JioSaavn matched for $mediaId -> ${resolved.matchedTitle} / ${resolved.matchedArtists.joinToString()}")
-        persistSaavnMetadata(mediaId, buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = metadata, resolved = resolved))
+        val saavnMetadata = buildResolvedSaavnMetadata(mediaId = mediaId, baseMetadata = metadata, resolved = resolved)
+        persistSaavnMetadata(mediaId, saavnMetadata)
+        applyResolvedSaavnMetadataToQueue(mediaId, saavnMetadata)
         val bitrate = resolved.bitrate ?: when (audioQuality) {
             iad1tya.echo.music.constants.AudioQuality.LOW -> 96_000
             iad1tya.echo.music.constants.AudioQuality.AUTO,
