@@ -95,6 +95,19 @@ constructor(
                                 val builder = request.newBuilder().header("User-Agent", ua)
                                 originReferer.origin?.let { builder.header("Origin", it) }
                                 originReferer.referer?.let { builder.header("Referer", it) }
+                                // CHATGPT_SAAVN_STREAM_HEADERS_V1_START
+                                val chatgptSaavnHost = request.url.host.lowercase()
+                                if (chatgptSaavnHost.contains("saavncdn.com") || chatgptSaavnHost.contains("jiosaavn.com")) {
+                                    builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
+                                    builder.header("Origin", "https://www.jiosaavn.com")
+                                    builder.header("Referer", "https://www.jiosaavn.com/")
+                                    builder.header("Accept", "*/*")
+                                    builder.header("Accept-Encoding", "identity")
+                                    if (request.header("Range").isNullOrBlank()) {
+                                        builder.header("Range", "bytes=0-")
+                                    }
+                                }
+                                // CHATGPT_SAAVN_STREAM_HEADERS_V1_END
                                 chain.proceed(builder.build())
                             }
                             .proxyAuthenticator { _, response ->
@@ -304,6 +317,19 @@ constructor(
                             val builder = request.newBuilder().header("User-Agent", ua)
                             originReferer.origin?.let { builder.header("Origin", it) }
                             originReferer.referer?.let { builder.header("Referer", it) }
+                            // CHATGPT_SAAVN_STREAM_HEADERS_V1_START
+                            val chatgptSaavnHost = request.url.host.lowercase()
+                            if (chatgptSaavnHost.contains("saavncdn.com") || chatgptSaavnHost.contains("jiosaavn.com")) {
+                                builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
+                                builder.header("Origin", "https://www.jiosaavn.com")
+                                builder.header("Referer", "https://www.jiosaavn.com/")
+                                builder.header("Accept", "*/*")
+                                builder.header("Accept-Encoding", "identity")
+                                if (request.header("Range").isNullOrBlank()) {
+                                    builder.header("Range", "bytes=0-")
+                                }
+                            }
+                            // CHATGPT_SAAVN_STREAM_HEADERS_V1_END
                             chain.proceed(builder.build())
                         }
                         .proxyAuthenticator { _, response ->
@@ -332,6 +358,14 @@ constructor(
             targetLength = targetLength,
             metadata = metadata,
         ) ?: return@withContext false
+
+        // CHATGPT_SAAVN_PREFETCH_429_GUARD_V1_START
+        // Saavn CDN commonly returns HTTP 429 when the app preloads many playlist items.
+        // Do not prefetch Saavn streams; let the active player request the selected track only.
+        if (resolvedUrl.contains("saavncdn.com", ignoreCase = true) || resolvedUrl.contains("jiosaavn.com", ignoreCase = true)) {
+            return@withContext false
+        }
+        // CHATGPT_SAAVN_PREFETCH_429_GUARD_V1_END
 
         runCatching {
             val dataSpec = DataSpec.Builder()

@@ -2712,6 +2712,23 @@ class MusicService :
                 return
             }
 
+            // CHATGPT_SAAVN_429_FALLBACK_V1_START
+            if (mediaId != null && isSaavnBackedTrack(mediaId) && getHttpResponseCode(error) == 429) {
+                Log.d("MusicService", "JioSaavn CDN returned HTTP 429 for $mediaId; clearing Saavn URL and falling back")
+                songUrlCache.remove(mediaId)
+                saavnRetryCount.remove(mediaId)
+                if (mediaId.startsWith("saavn:")) {
+                    markSongAsFailed(mediaId)
+                    handleFinalFailure()
+                } else if (!isYoutubeFallbackCoolingDown(mediaId)) {
+                    retryCurrentTrackWithYoutube(mediaId)
+                } else {
+                    handleFinalFailure()
+                }
+                return
+            }
+            // CHATGPT_SAAVN_429_FALLBACK_V1_END
+
             if (mediaId != null && shouldRetrySaavnBeforeYoutube(mediaId, error)) {
                 retryCurrentTrackWithSaavn(mediaId, "Transient JioSaavn network/CDN failure")
                 return
@@ -3026,6 +3043,19 @@ class MusicService :
                                         val builder = request.newBuilder().header("User-Agent", ua)
                                         originReferer.origin?.let { builder.header("Origin", it) }
                                         originReferer.referer?.let { builder.header("Referer", it) }
+                                        // CHATGPT_SAAVN_STREAM_HEADERS_V1_START
+                                        val chatgptSaavnHost = request.url.host.lowercase()
+                                        if (chatgptSaavnHost.contains("saavncdn.com") || chatgptSaavnHost.contains("jiosaavn.com")) {
+                                            builder.header("User-Agent", "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Mobile Safari/537.36")
+                                            builder.header("Origin", "https://www.jiosaavn.com")
+                                            builder.header("Referer", "https://www.jiosaavn.com/")
+                                            builder.header("Accept", "*/*")
+                                            builder.header("Accept-Encoding", "identity")
+                                            if (request.header("Range").isNullOrBlank()) {
+                                                builder.header("Range", "bytes=0-")
+                                            }
+                                        }
+                                        // CHATGPT_SAAVN_STREAM_HEADERS_V1_END
                                         if (isYoutubeMediaHost) {
                                             builder.header("Accept-Encoding", "identity")
                                             if (request.header("Range").isNullOrBlank()) {
@@ -3763,7 +3793,7 @@ class MusicService :
             }
             return ExternalResolvedUrl(
                 url = resolved.url,
-                expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
+                expiresAtMs = System.currentTimeMillis() + 45 * 60 * 1000L,
                 formatEntity = FormatEntity(
                     id = mediaId,
                     itag = -320,
@@ -3825,7 +3855,7 @@ class MusicService :
         }
         return ExternalResolvedUrl(
             url = resolved.url,
-            expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
+            expiresAtMs = System.currentTimeMillis() + 45 * 60 * 1000L,
             formatEntity = FormatEntity(
                 id = mediaId,
                 itag = -320,

@@ -674,18 +674,59 @@ object SaavnAudioResolver {
         return links.distinctBy { it.url }
     }
 
-    private fun orderedDownloadLinks(links: List<DownloadLink>, audioQuality: AudioQuality): List<DownloadLink> {
-        val normalized = links.mapNotNull { link -> normalizeDownloadUrl(link.url)?.let { link.copy(url = it) } }.distinctBy { it.url }
+    private fun orderedDownloadLinks(
+        links: List<DownloadLink>,
+        audioQuality: AudioQuality,
+    ): List<DownloadLink> {
+        // chatgpt-saavn-429-quality-guard-v1
+        val normalized = links.mapNotNull { link ->
+            normalizeDownloadUrl(link.url)?.let { cleaned ->
+                link.copy(url = cleaned, bitrate = effectiveSaavnBitrate(link.copy(url = cleaned)))
+            }
+        }.distinctBy { it.url }
+
+        val realStreams = normalized.filterNot { isPreviewOnlySaavnLink(it) }
+
         return when (audioQuality) {
-            AudioQuality.LOW -> normalized.sortedWith(
+            AudioQuality.LOW -> realStreams.sortedWith(
                 compareBy<DownloadLink> { if (it.bitrate > 0) it.bitrate else Int.MAX_VALUE }
                     .thenBy { if (it.url.contains(".mp4", ignoreCase = true)) 0 else 1 }
-            )
-            AudioQuality.AUTO, AudioQuality.HIGH -> normalized.sortedWith(
-                compareByDescending<DownloadLink> { if (it.url.contains(".mp4", ignoreCase = true)) it.bitrate + 1_000_000 else it.bitrate }
                     .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 0 else 1 }
             )
+            AudioQuality.AUTO, AudioQuality.HIGH -> realStreams
+                // If only 48/96 kbps Saavn URLs are available in AUTO/HIGH, treat the
+                // Saavn resolve as unsuccessful and let YouTube Music handle fallback.
+                .filter { effectiveSaavnBitrate(it) >= 128_000 }
+                .sortedWith(
+                    compareByDescending<DownloadLink> { if (it.url.contains(".mp4", ignoreCase = true)) effectiveSaavnBitrate(it) + 1_000_000 else effectiveSaavnBitrate(it) }
+                        .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 0 else 1 }
+                )
         }
+    }
+
+    private fun effectiveSaavnBitrate(link: DownloadLink): Int {
+        if (link.bitrate > 0) return link.bitrate
+        val inferred = inferBitrateFromUrlCompat(link.url)
+        return inferred.takeIf { it > 0 } ?: 0
+    }
+
+    private fun inferBitrateFromUrlCompat(url: String): Int {
+        val lower = url.lowercase(Locale.ROOT)
+        return when {
+            lower.contains("_320.") || lower.contains("320kbps") || lower.contains("bitrate=320") -> 320_000
+            lower.contains("_160.") || lower.contains("160kbps") || lower.contains("bitrate=160") -> 160_000
+            lower.contains("_96.") || lower.contains("96kbps") || lower.contains("bitrate=96") -> 96_000
+            lower.contains("_48.") || lower.contains("48kbps") || lower.contains("bitrate=48") -> 48_000
+            else -> 0
+        }
+    }
+
+    private fun isPreviewOnlySaavnLink(link: DownloadLink): Boolean {
+        val quality = link.quality.lowercase(Locale.ROOT)
+        val url = link.url.lowercase(Locale.ROOT)
+        if (quality.contains("preview") || url.contains("preview")) return true
+        if (url.contains("media_preview") || url.contains("preview_url")) return true
+        return false
     }
 
     private fun qualityScore(links: List<DownloadLink>): Int = links.maxOfOrNull { it.bitrate } ?: 0
