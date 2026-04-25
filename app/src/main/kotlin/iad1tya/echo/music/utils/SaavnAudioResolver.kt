@@ -140,19 +140,28 @@ object SaavnAudioResolver {
         audioQuality: AudioQuality,
     ): Result<ResolvedStream?> = withContext(Dispatchers.IO) {
         runCatching {
+            // saavn-reduce-false-youtube-fallback-v9: do not reject Saavn search hits too early. Many valid
+            // JioSaavn results only expose full artist/download metadata after song.getDetails.
             val allCandidates = linkedMapOf<String, Candidate>()
             for (query in buildResolveQueries(mediaMetadata)) {
                 search(query, MAX_RESOLVE_CANDIDATES).forEach { candidate ->
                     allCandidates.putIfAbsent(candidate.id, candidate)
                 }
-
-                bestAcceptedCandidate(allCandidates.values, mediaMetadata, early = true)?.let { candidate ->
-                    buildResolvedStream(candidate, mediaMetadata, audioQuality)?.let { return@runCatching it }
-                }
             }
+            if (allCandidates.isEmpty()) return@runCatching null
 
-            bestAcceptedCandidate(allCandidates.values, mediaMetadata, early = false)?.let { candidate ->
-                buildResolvedStream(candidate, mediaMetadata, audioQuality)?.let { return@runCatching it }
+            val ranked = allCandidates.values
+                .map { candidate -> candidate to score(candidate, mediaMetadata) }
+                .sortedWith(
+                    compareByDescending<Pair<Candidate, Int>> { it.second }
+                        .thenByDescending { qualityScore(it.first.downloadLinks) }
+                )
+                .take(12)
+
+            for ((candidate, _) in ranked) {
+                buildResolvedStream(candidate, mediaMetadata, audioQuality)?.let { resolved ->
+                    return@runCatching resolved
+                }
             }
 
             null
@@ -245,7 +254,16 @@ object SaavnAudioResolver {
         requested: MediaMetadata?,
         audioQuality: AudioQuality,
     ): ResolvedStream? {
-        val hydrated = if (candidate.downloadLinks.isEmpty() || candidate.thumbnailUrl.isNullOrBlank()) {
+        // saavn-reduce-false-youtube-fallback-v9: hydrate before choosing/failing.
+        // Search results often have weak artist/link metadata while details have
+        // encrypted_media_url + complete credits. Without this, valid Saavn songs
+        // fall back to YouTube immediately.
+        val bestKnownBitrate = qualityScore(candidate.downloadLinks)
+        val shouldHydrate = candidate.downloadLinks.isEmpty() ||
+            bestKnownBitrate < 160 ||
+            candidate.artists.isEmpty() ||
+            candidate.thumbnailUrl.isNullOrBlank()
+        val hydrated = if (shouldHydrate) {
             fetchSong(candidate.id) ?: candidate
         } else {
             candidate
@@ -754,35 +772,44 @@ object SaavnAudioResolver {
         if (requestedArtists.isEmpty()) return true
         val requestedPrimaryArtist = requestedArtists.first()
         val candidateArtists = candidate.artists.map(::normalizeArtist).filter { it.isNotBlank() }
-        if (candidateArtists.isEmpty()) return false
-        val candidatePrimaryArtist = candidateArtists.first()
+        if (candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }) return true
 
-        if (artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist)) return true
-        val requestedPrimaryAppears = candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) }
-        if (!requestedPrimaryAppears) return false
+        // Some Saavn detail responses are missing structured artists, but keep the
+        // artist in title/album text. Allow that only as a fallback after title match.
+        if (candidateArtists.isEmpty()) {
+            val candidateText = normalizeTitleCore(candidate.title + " " + candidate.albumName.orEmpty())
+            val wantedTokens = requestedPrimaryArtist.split(' ').filter { it.length > 1 }
+            return wantedTokens.isNotEmpty() && wantedTokens.all { token -> candidateText.contains(token) }
+        }
 
-        return requestedArtists.drop(1).any { artistNamesMatch(candidatePrimaryArtist, it) }
+        return false
     }
 
     private fun isStrongAccept(candidate: Candidate, score: Int, requested: MediaMetadata): Boolean {
         if (hasUnexpectedVariantTerms(candidate, requested.title)) return false
         val requestedTitle = normalizeTitleCore(cleanupLookupTitle(requested.title, requested.artists.firstOrNull()?.name.orEmpty()))
-        val candidateTitle = normalizeTitleCore(candidate.title)
+        val candidateTitle = normalizeTitleCore(cleanupLookupTitle(candidate.title, requested.artists.firstOrNull()?.name.orEmpty()))
         if (requestedTitle.isBlank() || candidateTitle.isBlank()) return false
 
         val titleSimilarity = tokenSimilarity(candidateTitle, requestedTitle)
         val titleExact = candidateTitle == requestedTitle
-        val titleStrong = titleExact || titleSimilarity >= 68 || strongContains(candidateTitle, requestedTitle)
+        val titleStrong = titleExact || titleSimilarity >= 45 || strongContains(candidateTitle, requestedTitle)
         if (!titleStrong) return false
 
         val durationDiff = if (requested.duration > 0 && candidate.duration != null) abs(candidate.duration - requested.duration) else 0
-        val durationClose = requested.duration <= 0 || candidate.duration == null || durationDiff <= 22
+        val durationClose = requested.duration <= 0 || candidate.duration == null || durationDiff <= 45 || titleExact
         if (!durationClose) return false
 
         val requestedPrimaryArtist = requested.artists.firstOrNull()?.name?.let(::normalizeArtist).orEmpty()
-        if (requestedPrimaryArtist.isBlank()) return score >= 105
+        if (requestedPrimaryArtist.isBlank()) return score >= 95
 
-        return hasStrongPrimaryArtistMatch(candidate, requested) && score >= (if (titleExact) 205 else 225)
+        val artistOk = hasStrongPrimaryArtistMatch(candidate, requested)
+        if (!artistOk) return false
+
+        // Previous patches used very high thresholds, which caused valid Saavn detail
+        // matches to fall back to YouTube. Keep the original-artist requirement, but
+        // lower the score gate once title+artist have both matched.
+        return score >= (if (titleExact) 140 else 115)
     }
 
     private fun score(candidate: Candidate, requested: MediaMetadata): Int {
@@ -808,8 +835,8 @@ object SaavnAudioResolver {
                 artistNamesMatch(candidatePrimaryArtist, requestedPrimaryArtist) -> 180
                 candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } &&
                     requestedArtists.drop(1).any { artistNamesMatch(candidatePrimaryArtist, it) } -> 112
-                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 35
-                candidateArtists.isNotEmpty() -> -140
+                candidateArtists.any { artistNamesMatch(it, requestedPrimaryArtist) } -> 112
+                candidateArtists.isNotEmpty() -> -90
                 else -> -45
             }
         }
