@@ -9,7 +9,7 @@
         android:id="@+id/widget_background"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@drawable/widget_background"
+        android:background="@drawable/ytm_widget_panel"
         android:gravity="center_vertical"
         android:orientation="vertical"
         android:padding="16dp">
@@ -60,7 +60,7 @@
                     android:fontFamily="sans-serif"
                     android:maxLines="1"
                     android:text="Unknown artist"
-                    android:textColor="#CCFFFFFF"
+                    android:textColor="#FFFFFFFF"
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
@@ -101,7 +101,7 @@
                 android:contentDescription="Previous"
                 android:padding="8dp"
                 android:scaleType="centerInside"
-                android:src="@drawable/skip_previous"
+                android:src="@drawable/ic_ytm_skip_previous"
                 android:tint="@android:color/white" />
 
             <ImageButton
@@ -114,7 +114,7 @@
                 android:contentDescription="Play or pause"
                 android:padding="12dp"
                 android:scaleType="centerInside"
-                android:src="@drawable/play"
+                android:src="@drawable/ic_ytm_play_arrow"
                 android:tint="@android:color/black" />
 
             <ImageButton
@@ -126,7 +126,7 @@
                 android:contentDescription="Next"
                 android:padding="8dp"
                 android:scaleType="centerInside"
-                android:src="@drawable/skip_next"
+                android:src="@drawable/ic_ytm_skip_next"
                 android:tint="@android:color/white" />
 
             <ImageButton

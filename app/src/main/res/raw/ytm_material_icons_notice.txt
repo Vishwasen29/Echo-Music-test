@@ -1,0 +1,5 @@
+Material icons notice:
+This patch tries to download Material Design / Material Symbols icon XMLs from google/material-design-icons.
+If download fails, embedded vector fallbacks are written instead.
+The icons are used for playback/search/widget controls only; official YouTube Music logos are not copied.
+Downloaded icons this run: 8.

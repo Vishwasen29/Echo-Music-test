@@ -94,7 +94,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
                 applyProgress(views, progress.coerceIn(0, 1000))
                 views.setImageViewResource(
                     R.id.widget_play_pause,
-                    if (isPlaying) R.drawable.pause else R.drawable.play,
+                    if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
                 )
                 appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
             }
@@ -241,7 +241,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
 
             views.setImageViewResource(
                 R.id.widget_play_pause,
-                if (isPlaying) R.drawable.pause else R.drawable.play,
+                if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
             )
             views.setImageViewResource(
                 R.id.widget_shuffle,
@@ -287,7 +287,7 @@ class MusicWidgetProvider : AppWidgetProvider() {
 
             views.setImageViewResource(
                 R.id.widget_play_pause,
-                if (isPlaying) R.drawable.pause else R.drawable.play,
+                if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
             )
             views.setImageViewResource(
                 R.id.widget_shuffle,

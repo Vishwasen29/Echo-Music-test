@@ -29,7 +29,7 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
 
     companion object {
         private const val DEFAULT_BG = 0xFF111111.toInt()
-        private const val BACKGROUND_ALPHA = 228
+        private const val BACKGROUND_ALPHA = 235
         private val widgetCacheLock = Any()
 
         @Volatile
@@ -82,7 +82,7 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
                 views.setProgressBar(R.id.widget_progress, 1000, progress.coerceIn(0, 1000), false)
                 views.setImageViewResource(
                     R.id.widget_play_pause,
-                    if (isPlaying) R.drawable.pause else R.drawable.play,
+                    if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
                 )
                 appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
             }
@@ -92,11 +92,7 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
             val cachedUrl = cachedAlbumArtUrl
             val cachedArt = cachedRoundedAlbumArt
             val cachedBackground = cachedBackgroundBitmap
-            if (cachedUrl == albumArtUrl && cachedArt != null && cachedBackground != null) {
-                cachedArt to cachedBackground
-            } else {
-                null
-            }
+            if (cachedUrl == albumArtUrl && cachedArt != null && cachedBackground != null) cachedArt to cachedBackground else null
         }
 
         private fun putCachedVisuals(albumArtUrl: String, roundedArt: Bitmap, backgroundBitmap: Bitmap) {
@@ -108,32 +104,13 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         }
     }
 
-    override fun onUpdate(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray,
-    ) {
-        updateWidgets(
-            context = context,
-            appWidgetManager = appWidgetManager,
-            appWidgetIds = appWidgetIds,
-            songTitle = null,
-            artistName = null,
-            albumArtUrl = null,
-            isPlaying = false,
-            positionMs = 0L,
-            durationMs = 0L,
-        )
+    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
+        updateWidgets(context, appWidgetManager, appWidgetIds, null, null, null, false, 0L, 0L)
     }
 
     private fun makeServicePendingIntent(context: Context, requestCode: Int, action: String): PendingIntent {
         val intent = Intent(context, MusicService::class.java).apply { this.action = action }
-        return PendingIntent.getService(
-            context,
-            requestCode,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        return PendingIntent.getService(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
 
     private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Float): Bitmap {
@@ -146,7 +123,6 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         val srcLeft = (bitmap.width - size) / 2
         val srcTop = (bitmap.height - size) / 2
         val srcRect = Rect(srcLeft, srcTop, srcLeft + size, srcTop + size)
-
         canvas.drawARGB(0, 0, 0, 0)
         paint.color = 0xff424242.toInt()
         canvas.drawRoundRect(dstRectF, radiusPx, radiusPx, paint)
@@ -169,9 +145,7 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         val palette = Palette.from(bitmap).clearFilters().generate()
         return palette.getDarkVibrantColor(
             palette.getVibrantColor(
-                palette.getDarkMutedColor(
-                    palette.getDominantColor(DEFAULT_BG),
-                ),
+                palette.getDarkMutedColor(palette.getDominantColor(DEFAULT_BG)),
             ),
         )
     }
@@ -180,141 +154,78 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         val largest = maxOf(bitmap.width, bitmap.height)
         if (largest <= maxSide) return bitmap
         val ratio = maxSide.toFloat() / largest.toFloat()
-        val targetWidth = (bitmap.width * ratio).toInt().coerceAtLeast(1)
-        val targetHeight = (bitmap.height * ratio).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(bitmap, targetWidth, targetHeight, true)
+        return Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt().coerceAtLeast(1), (bitmap.height * ratio).toInt().coerceAtLeast(1), true)
     }
 
-    private fun applyCommonState(
-        views: RemoteViews,
-        context: Context,
-        songTitle: String?,
-        artistName: String?,
-        isPlaying: Boolean,
-        positionMs: Long,
-        durationMs: Long,
-    ) {
+    private fun applyCommonState(views: RemoteViews, context: Context, songTitle: String?, artistName: String?, isPlaying: Boolean, positionMs: Long, durationMs: Long) {
         views.setTextViewText(R.id.widget_song_title, songTitle ?: "No song playing")
-        views.setTextViewText(R.id.widget_artist_name, artistName ?: "Unknown artist")
-        views.setImageViewResource(
-            R.id.widget_play_pause,
-            if (isPlaying) R.drawable.pause else R.drawable.play,
-        )
-        views.setImageViewResource(R.id.widget_background_tint, R.drawable.widget_background)
+        views.setTextViewText(R.id.widget_artist_name, artistName ?: "Echo Music")
+        views.setImageViewResource(R.id.widget_play_pause, if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow)
         views.setInt(R.id.widget_background_tint, "setImageAlpha", BACKGROUND_ALPHA)
-
         val safeDuration = durationMs.coerceAtLeast(0L)
         val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else 0L)
         val progress = if (safeDuration > 0L) ((safePosition * 1000L) / safeDuration).toInt() else 0
         views.setProgressBar(R.id.widget_progress, 1000, progress.coerceIn(0, 1000), false)
-
-        views.setOnClickPendingIntent(
-            R.id.widget_previous,
-            makeServicePendingIntent(context, 5101, MusicService.ACTION_PREVIOUS),
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_play_pause,
-            makeServicePendingIntent(context, 5102, MusicService.ACTION_PLAY_PAUSE),
-        )
-        views.setOnClickPendingIntent(
-            R.id.widget_next,
-            makeServicePendingIntent(context, 5103, MusicService.ACTION_NEXT),
-        )
-
+        views.setOnClickPendingIntent(R.id.widget_previous, makeServicePendingIntent(context, 5101, MusicService.ACTION_PREVIOUS))
+        views.setOnClickPendingIntent(R.id.widget_play_pause, makeServicePendingIntent(context, 5102, MusicService.ACTION_PLAY_PAUSE))
+        views.setOnClickPendingIntent(R.id.widget_next, makeServicePendingIntent(context, 5103, MusicService.ACTION_NEXT))
         val openAppIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
-        val openAppPendingIntent = PendingIntent.getActivity(
-            context,
-            5104,
-            openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        val openAppPendingIntent = PendingIntent.getActivity(context, 5104, openAppIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         views.setOnClickPendingIntent(R.id.widget_root_click, openAppPendingIntent)
         views.setOnClickPendingIntent(R.id.widget_album_art, openAppPendingIntent)
         views.setOnClickPendingIntent(R.id.widget_song_info, openAppPendingIntent)
     }
 
-    private fun applyArtworkAndPalette(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray,
-        roundedAlbumArt: Bitmap,
-        backgroundBitmap: Bitmap,
-    ) {
+    private fun updateWithFallback(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, songTitle: String?, artistName: String?, isPlaying: Boolean, positionMs: Long, durationMs: Long) {
         for (appWidgetId in appWidgetIds) {
             val views = RemoteViews(context.packageName, R.layout.widget_music_player_4x1)
-            views.setImageViewBitmap(R.id.widget_album_art, roundedAlbumArt)
-            views.setImageViewBitmap(R.id.widget_background_tint, backgroundBitmap)
-            views.setInt(R.id.widget_background_tint, "setImageAlpha", BACKGROUND_ALPHA)
-            appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
+            applyCommonState(views, context, songTitle, artistName, isPlaying, positionMs, durationMs)
+            views.setImageViewResource(R.id.widget_album_art, R.drawable.ytm_album_placeholder)
+            views.setImageViewResource(R.id.widget_background_tint, R.drawable.ytm_widget_panel)
+            appWidgetManager.updateAppWidget(appWidgetId, views)
         }
     }
 
-    private fun updateWidgets(
-        context: Context,
-        appWidgetManager: AppWidgetManager,
-        appWidgetIds: IntArray,
-        songTitle: String?,
-        artistName: String?,
-        albumArtUrl: String?,
-        isPlaying: Boolean,
-        positionMs: Long,
-        durationMs: Long,
-    ) {
+    private fun updateWidgets(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, songTitle: String?, artistName: String?, albumArtUrl: String?, isPlaying: Boolean, positionMs: Long, durationMs: Long) {
         if (appWidgetIds.isEmpty()) return
-
-        for (appWidgetId in appWidgetIds) {
-            val views = RemoteViews(context.packageName, R.layout.widget_music_player_4x1)
-            applyCommonState(
-                views = views,
-                context = context,
-                songTitle = songTitle,
-                artistName = artistName,
-                isPlaying = isPlaying,
-                positionMs = positionMs,
-                durationMs = durationMs,
-            )
-            views.setImageViewResource(R.id.widget_album_art, R.drawable.echo_logo)
-            appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
-
-        if (albumArtUrl.isNullOrBlank()) return
-
-        getCachedVisuals(albumArtUrl)?.let { (cachedArt, cachedBackground) ->
-            applyArtworkAndPalette(
-                context = context,
-                appWidgetManager = appWidgetManager,
-                appWidgetIds = appWidgetIds,
-                roundedAlbumArt = cachedArt,
-                backgroundBitmap = cachedBackground,
-            )
+        if (albumArtUrl.isNullOrBlank()) {
+            updateWithFallback(context, appWidgetManager, appWidgetIds, songTitle, artistName, isPlaying, positionMs, durationMs)
             return
         }
-
-        CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-            try {
+        val cached = getCachedVisuals(albumArtUrl)
+        if (cached != null) {
+            applyVisuals(context, appWidgetManager, appWidgetIds, songTitle, artistName, isPlaying, positionMs, durationMs, cached.first, cached.second)
+            return
+        }
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val pair = runCatching {
                 val connection = URL(albumArtUrl).openConnection().apply {
-                    connectTimeout = 3500
-                    readTimeout = 3500
-                    connect()
+                    connectTimeout = 2500
+                    readTimeout = 2500
                 }
-                val bitmap = connection.getInputStream().use(BitmapFactory::decodeStream) ?: return@launch
+                connection.getInputStream().use { input -> BitmapFactory.decodeStream(input) }
+            }.getOrNull()?.let { bitmap ->
                 val scaled = scaleBitmapForWidget(bitmap)
                 val rounded = getRoundedBitmap(scaled, 18f)
                 val bgColor = chooseBackgroundColor(scaled)
-                val bgBitmap = createRoundedBackgroundBitmap(1200, 240, bgColor, 32f)
-                putCachedVisuals(albumArtUrl, rounded, bgBitmap)
-
-                withContext(Dispatchers.Main) {
-                    applyArtworkAndPalette(
-                        context = context,
-                        appWidgetManager = appWidgetManager,
-                        appWidgetIds = appWidgetIds,
-                        roundedAlbumArt = rounded,
-                        backgroundBitmap = bgBitmap,
-                    )
-                }
-            } catch (_: Exception) {
+                val background = createRoundedBackgroundBitmap(720, 150, bgColor, 28f)
+                putCachedVisuals(albumArtUrl, rounded, background)
+                rounded to background
             }
+            withContext(Dispatchers.Main) {
+                if (pair != null) applyVisuals(context, appWidgetManager, appWidgetIds, songTitle, artistName, isPlaying, positionMs, durationMs, pair.first, pair.second)
+                else updateWithFallback(context, appWidgetManager, appWidgetIds, songTitle, artistName, isPlaying, positionMs, durationMs)
+            }
+        }
+    }
+
+    private fun applyVisuals(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray, songTitle: String?, artistName: String?, isPlaying: Boolean, positionMs: Long, durationMs: Long, albumArt: Bitmap, background: Bitmap) {
+        for (appWidgetId in appWidgetIds) {
+            val views = RemoteViews(context.packageName, R.layout.widget_music_player_4x1)
+            applyCommonState(views, context, songTitle, artistName, isPlaying, positionMs, durationMs)
+            views.setImageViewBitmap(R.id.widget_album_art, albumArt)
+            views.setImageViewBitmap(R.id.widget_background_tint, background)
+            appWidgetManager.updateAppWidget(appWidgetId, views)
         }
     }
 }

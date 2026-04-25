@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ytm_black">#FF050505</color>
+    <color name="ytm_surface">#FF111111</color>
+    <color name="ytm_surface_high">#FF1D1D1D</color>
+    <color name="ytm_surface_soft">#E61A1A1A</color>
+    <color name="ytm_red">#FFFF0033</color>
+    <color name="ytm_red_dark">#FF9A001D</color>
+    <color name="ytm_text_primary">#FFFFFFFF</color>
+    <color name="ytm_text_secondary">#CCFFFFFF</color>
+    <color name="ytm_text_muted">#99FFFFFF</color>
+    <color name="ytm_progress_bg">#55FFFFFF</color>
+</resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item><shape><gradient android:startColor="#FF3C0A14" android:endColor="#FF0B0B0B" android:angle="315"/><corners android:radius="18dp"/></shape></item>
+    <item android:gravity="center" android:width="32dp" android:height="32dp" android:drawable="@drawable/ic_ytm_music_note" />
+</layer-list>

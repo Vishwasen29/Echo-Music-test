@@ -85,7 +85,7 @@ class AdaptiveMusicWidgetProvider : AppWidgetProvider() {
                 views.setProgressBar(R.id.widget_progress, 1000, progress.coerceIn(0, 1000), false)
                 views.setImageViewResource(
                     R.id.widget_play_pause,
-                    if (isPlaying) R.drawable.pause else R.drawable.play,
+                    if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
                 )
                 appWidgetManager.partiallyUpdateAppWidget(appWidgetId, views)
             }
@@ -186,7 +186,7 @@ class AdaptiveMusicWidgetProvider : AppWidgetProvider() {
         )
         views.setImageViewResource(
             R.id.widget_play_pause,
-            if (isPlaying) R.drawable.pause else R.drawable.play,
+            if (isPlaying) R.drawable.ic_ytm_pause else R.drawable.ic_ytm_play_arrow,
         )
 
         val safeDuration = durationMs.coerceAtLeast(0L)
@@ -276,7 +276,7 @@ class AdaptiveMusicWidgetProvider : AppWidgetProvider() {
                 trackCounter = trackCounter,
             )
             views.setImageViewResource(R.id.widget_album_art, R.drawable.echo_logo)
-            views.setImageViewResource(R.id.widget_background_tint, R.drawable.widget_background)
+            views.setImageViewResource(R.id.widget_background_tint, R.drawable.ytm_widget_panel)
             appWidgetManager.updateAppWidget(appWidgetId, views)
         }
 
