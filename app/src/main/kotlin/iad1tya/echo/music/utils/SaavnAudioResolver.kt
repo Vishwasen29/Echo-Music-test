@@ -16,8 +16,14 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
+import android.util.Base64
+import javax.crypto.Cipher
+import javax.crypto.spec.SecretKeySpec
 
 object SaavnAudioResolver {
+    // SAAVN_MP4_QUALITY_PATCH_V1: keep Saavn playback on direct .mp4 320/160/96/48 streams.
+    private const val SAAVN_DES_KEY = "38346591"
+    private val SAAVN_MP4_QUALITY_PATTERN = Regex("""_(48|96|160|320)\.mp4""")
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
@@ -153,7 +159,7 @@ object SaavnAudioResolver {
 
             for ((candidate, candidateScore) in ranked) {
                 if (!isStrongAccept(candidate, candidateScore, mediaMetadata)) continue
-                val hydrated = if (candidate.downloadLinks.isNotEmpty() && !candidate.thumbnailUrl.isNullOrBlank()) {
+                val hydrated = if (candidate.downloadLinks.any { isSaavnMp4Url(it.url) } && !candidate.thumbnailUrl.isNullOrBlank()) {
                     candidate
                 } else {
                     fetchSong(candidate.id) ?: candidate
@@ -695,26 +701,43 @@ object SaavnAudioResolver {
         return (primaryArtists + extraArtists).toList()
     }
     private fun parseDownloadLinks(json: JSONObject): List<DownloadLink> {
-        val list = mutableListOf<DownloadLink>()
+        val links = mutableListOf<DownloadLink>()
+
+        // Prefer the same direct Saavn MP4 ladder used by Echo-Saavn-Extension:
+        // encrypted_media_url -> DES decrypt -> _320/_160/_96/_48.mp4.
+        buildSaavnMp4Ladder(json).forEach { links += it }
+
         val arrays = listOf(
             json.optJSONArray("downloadUrl"),
             json.optJSONArray("download_url"),
+            json.optJSONArray("downloadUrls"),
+            json.optJSONArray("download_urls"),
         )
         arrays.forEach { array ->
             if (array == null) return@forEach
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                val rawUrl = item.optString("url").trim()
+                val rawUrl = item.optString("url")
+                    .ifBlank { item.optString("link") }
+                    .ifBlank { item.optString("downloadUrl") }
+                    .trim()
                 val url = normalizeDownloadUrl(rawUrl) ?: continue
-                val quality = item.optString("quality").ifBlank { item.optString("bitrate") }.trim()
-                list += DownloadLink(
-                    quality = quality,
+                val quality = item.optString("quality")
+                    .ifBlank { item.optString("bitrate") }
+                    .ifBlank { inferQualityFromUrl(url) }
+                    .trim()
+                val bitrate = parseBitrate(quality).takeIf { it > 0 } ?: inferBitrateFromUrl(url)
+
+                // Keep non-MP4 links as fallback, but MP4 ladder is inserted first and wins on equal bitrate.
+                links += DownloadLink(
+                    quality = quality.ifBlank { "${bitrate / 1000}kbps" },
                     url = url,
-                    bitrate = parseBitrate(quality),
+                    bitrate = bitrate,
                 )
             }
         }
 
+        // Preview links are only fallbacks. Do not let a preview/mp3 beat the real MP4 ladder.
         val directCandidates = listOf(
             json.optString("vlink").trim(),
             json.optString("media_preview_url").trim(),
@@ -722,14 +745,113 @@ object SaavnAudioResolver {
         )
         directCandidates.forEach { raw ->
             val url = normalizeDownloadUrl(raw) ?: return@forEach
-            list += DownloadLink(
-                quality = "preview",
-                url = url,
-                bitrate = parseBitrate("96kbps"),
-            )
+            if (url.contains("preview", ignoreCase = true)) {
+                links += DownloadLink(
+                    quality = "preview",
+                    url = url,
+                    bitrate = inferBitrateFromUrl(url).takeIf { it > 0 } ?: 96000,
+                )
+            }
         }
 
-        return list.distinctBy { it.url }
+        return links
+            .distinctBy { it.url }
+            .sortedWith(
+                compareByDescending<DownloadLink> { isSaavnMp4Url(it.url) }
+                    .thenByDescending { it.bitrate }
+            )
+    }
+
+
+    private fun buildSaavnMp4Ladder(json: JSONObject): List<DownloadLink> {
+        val encrypted = findEncryptedMediaUrl(json) ?: return emptyList()
+        val decryptedUrl = decryptSaavnMediaUrl(encrypted) ?: return emptyList()
+        val cleanUrl = normalizeDownloadUrl(decryptedUrl) ?: return emptyList()
+        val hasMp4QualitySuffix = SAAVN_MP4_QUALITY_PATTERN.containsMatchIn(cleanUrl)
+        if (!hasMp4QualitySuffix && !cleanUrl.contains(".mp4", ignoreCase = true)) return emptyList()
+
+        val bitrates = listOf(320, 160, 96, 48)
+        return bitrates.map { bitrate ->
+            val streamUrl = if (hasMp4QualitySuffix) {
+                cleanUrl.replace(SAAVN_MP4_QUALITY_PATTERN, "_${bitrate}.mp4")
+            } else {
+                cleanUrl
+            }
+            DownloadLink(
+                quality = "${bitrate}kbps",
+                url = streamUrl,
+                bitrate = bitrate * 1000,
+            )
+        }.distinctBy { it.url }
+    }
+
+    private fun findEncryptedMediaUrl(json: JSONObject): String? {
+        fun JSONObject.firstString(vararg keys: String): String? {
+            for (key in keys) {
+                val value = optString(key).trim()
+                if (value.isNotBlank()) return value
+            }
+            return null
+        }
+
+        json.firstString(
+            "encrypted_media_url",
+            "encryptedMediaUrl",
+            "encryptedMediaURL",
+            "encrypted_url",
+            "encryptedUrl",
+        )?.let { return it }
+
+        json.optJSONObject("more_info")?.firstString(
+            "encrypted_media_url",
+            "encryptedMediaUrl",
+            "encryptedMediaURL",
+            "encrypted_url",
+            "encryptedUrl",
+        )?.let { return it }
+
+        json.optJSONObject("media")?.firstString(
+            "encrypted_media_url",
+            "encryptedMediaUrl",
+            "encryptedMediaURL",
+        )?.let { return it }
+
+        return null
+    }
+
+    private fun decryptSaavnMediaUrl(encrypted: String): String? {
+        return runCatching {
+            var value = encrypted.trim()
+            repeat(2) {
+                value = URLDecoder.decode(value, Charsets.UTF_8.name())
+            }
+            val decoded = Base64.decode(value, Base64.DEFAULT)
+            val cipher = Cipher.getInstance("DES/ECB/PKCS5Padding")
+            val key = SecretKeySpec(SAAVN_DES_KEY.toByteArray(Charsets.UTF_8), "DES")
+            cipher.init(Cipher.DECRYPT_MODE, key)
+            decodeSaavnUrl(String(cipher.doFinal(decoded), Charsets.UTF_8))
+        }.getOrNull()
+    }
+
+    private fun isSaavnMp4Url(url: String): Boolean {
+        val lower = url.lowercase(Locale.ROOT)
+        return lower.contains(".mp4") && (
+            lower.contains("saavncdn.com") ||
+                lower.contains("jiosaavn.com") ||
+                SAAVN_MP4_QUALITY_PATTERN.containsMatchIn(lower)
+            )
+    }
+
+    private fun inferBitrateFromUrl(url: String): Int {
+        val quality = inferQualityFromUrl(url)
+        return parseBitrate(quality)
+    }
+
+    private fun inferQualityFromUrl(url: String): String {
+        val lower = url.lowercase(Locale.ROOT)
+        val match = Regex("""_(48|96|160|320)\.mp4""").find(lower)
+            ?: Regex("""(?:^|[^0-9])(48|96|160|320)\s*(?:kbps|k)(?:[^0-9]|$)""").find(lower)
+        return match?.groupValues?.getOrNull(1)?.let { "${it}kbps" }.orEmpty()
     }
 
     private fun normalizeDownloadUrl(raw: String?): String? {
@@ -751,12 +873,14 @@ object SaavnAudioResolver {
 
         return when (audioQuality) {
             AudioQuality.LOW -> normalized.sortedWith(
-                compareBy<DownloadLink> { if (it.bitrate > 0) it.bitrate else Int.MAX_VALUE }
-                    .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
+                compareByDescending<DownloadLink> { isSaavnMp4Url(it.url) }
+                    .thenBy { if (it.bitrate > 0) it.bitrate else Int.MAX_VALUE }
+                    .thenByDescending { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
             )
             AudioQuality.AUTO, AudioQuality.HIGH -> normalized.sortedWith(
-                compareByDescending<DownloadLink> { it.bitrate }
-                    .thenBy { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
+                compareByDescending<DownloadLink> { isSaavnMp4Url(it.url) }
+                    .thenByDescending { it.bitrate }
+                    .thenByDescending { if (it.url.contains("saavncdn.com", ignoreCase = true)) 1 else 0 }
             )
         }
     }
@@ -1128,9 +1252,12 @@ object SaavnAudioResolver {
     private fun inferMimeType(url: String): String {
         val lower = url.lowercase(Locale.ROOT)
         return when {
-            lower.contains(".m4a") || lower.contains("mime=audio/mp4") -> "audio/mp4"
+            lower.contains(".mp4") || lower.contains("mime=audio/mp4") -> "audio/mp4"
+            lower.contains(".m4a") -> "audio/mp4"
             lower.contains(".aac") -> "audio/aac"
-            else -> "audio/mpeg"
+            lower.contains(".webm") || lower.contains("opus") -> "audio/webm"
+            lower.contains(".mp3") || lower.contains("mime=audio/mpeg") -> "audio/mpeg"
+            else -> "audio/mp4"
         }
     }
 }
