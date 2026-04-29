@@ -5,7 +5,7 @@
     android:layout_height="match_parent"
     android:padding="6dp"
     android:clipToPadding="false"
-    android:background="@drawable/ytm_widget_panel">
+    android:background="@android:color/transparent">
 
     <ImageView
         android:id="@+id/widget_background_tint"

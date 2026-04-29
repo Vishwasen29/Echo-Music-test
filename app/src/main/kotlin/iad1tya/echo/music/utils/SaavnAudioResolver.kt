@@ -56,6 +56,7 @@ object SaavnAudioResolver {
 
     private val searchCache = linkedMapOf<String, List<Candidate>>()
     private val songCache = linkedMapOf<String, Candidate?>()
+    private val explicitFlagCache = linkedMapOf<String, Boolean?>()
 
     private fun <T> putBoundedCache(cache: LinkedHashMap<String, T>, key: String, value: T, maxSize: Int) {
         if (!cache.containsKey(key) && cache.size >= maxSize) {
@@ -107,7 +108,6 @@ object SaavnAudioResolver {
         val language: String?,
         val albumName: String?,
         val thumbnailUrl: String?,
-        val explicitContent: Boolean?,
     )
 
     data class RecommendationSeed(
@@ -231,7 +231,7 @@ object SaavnAudioResolver {
                         .thenBy { normalizeTitleCore(it.title).length }
                 )
                 .filter { candidate ->
-                    !hasUnexpectedVariantTerms(candidate, query) || saavnSearchScore(candidate, query) >= 95
+                    !hasUnexpectedVariantTerms(candidate, query)
                 }
                 .take(limit)
 
@@ -340,7 +340,7 @@ object SaavnAudioResolver {
             add(normalizedLookupTitle)
         }
 
-        return queries.take(6)
+        return queries.take(7)
     }
 
     private fun buildSearchQueries(query: String): List<String> {
@@ -538,6 +538,14 @@ object SaavnAudioResolver {
             moreInfo?.optString("language").orEmpty(),
         )).takeIf { it.isNotBlank() }
 
+        val explicitFlag = parseExplicitContent(json, moreInfo)
+        synchronized(explicitFlagCache) {
+            if (!explicitFlagCache.containsKey(id) && explicitFlagCache.size >= 300) {
+                explicitFlagCache.keys.firstOrNull()?.let { explicitFlagCache.remove(it) }
+            }
+            explicitFlagCache[id] = explicitFlag
+        }
+
         return Candidate(
             id = id,
             title = title,
@@ -547,7 +555,6 @@ object SaavnAudioResolver {
             albumName = albumName,
             downloadLinks = parseDownloadLinks(json, moreInfo),
             thumbnailUrl = parseThumbnail(json, moreInfo),
-            explicitContent = parseExplicitContent(json, moreInfo),
         )
     }
 
@@ -929,11 +936,19 @@ object SaavnAudioResolver {
         }
     }
 
+    private fun candidateExplicitFlag(candidate: Candidate): Boolean? {
+        return synchronized(explicitFlagCache) { explicitFlagCache[candidate.id] }
+    }
+
     private fun explicitPreferenceScore(candidate: Candidate, requestedTitle: String): Int {
         if (textLooksCleanOrCensored(requestedTitle)) return 0
         var score = 0
-        if (candidate.explicitContent == true) score += 55
-        if (isCleanOrCensoredCandidate(candidate, requestedTitle)) score -= 260
+        when (candidateExplicitFlag(candidate)) {
+            true -> score += 45
+            false -> score -= 18
+            null -> Unit
+        }
+        if (isCleanOrCensoredCandidate(candidate, requestedTitle)) score -= 420
         return score
     }
 
@@ -955,7 +970,7 @@ object SaavnAudioResolver {
         if ("nightcore" in extraTerms || "lofi" in extraTerms || "lo fi" in extraTerms) score -= 100
         if ("dubbed" in extraTerms || "hindi dubbed" in extraTerms) score -= 160
         if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 100
-        if ("clean" in extraTerms || "radio edit" in extraTerms || "edited" in extraTerms || "censored" in extraTerms) score -= 260
+        if (isCleanOrCensoredCandidate(candidate, requestedTitle)) score -= 420
         return score
     }
 
@@ -992,6 +1007,8 @@ object SaavnAudioResolver {
             "edited version",
             "censored",
             "censored version",
+            "non explicit",
+            "non explicit version",
         ).forEach { term -> if (containsNormalizedTerm(normalized, term)) terms += term }
         return terms
     }
@@ -1020,9 +1037,7 @@ object SaavnAudioResolver {
     private fun containsNormalizedTerm(text: String, term: String): Boolean {
         val normalizedTerm = normalizeTitleCore(term)
         if (text.isBlank() || normalizedTerm.isBlank()) return false
-        val paddedText = " $text "
-        val paddedTerm = " $normalizedTerm "
-        return paddedText.contains(paddedTerm)
+        return " $text ".contains(" $normalizedTerm ")
     }
 
     private fun hasUnexpectedVariantTerms(candidate: Candidate, requestedTitle: String): Boolean {
@@ -1053,10 +1068,6 @@ object SaavnAudioResolver {
                 "devotional",
                 "bhajan",
                 "aarti",
-                "clean",
-                "radio edit",
-                "edited",
-                "censored",
             )
         }
     }
