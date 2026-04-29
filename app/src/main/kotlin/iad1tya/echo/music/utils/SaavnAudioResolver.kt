@@ -107,6 +107,7 @@ object SaavnAudioResolver {
         val language: String?,
         val albumName: String?,
         val thumbnailUrl: String?,
+        val explicitContent: Boolean?,
     )
 
     data class RecommendationSeed(
@@ -327,6 +328,7 @@ object SaavnAudioResolver {
         }
 
         add(lookupTitle, primaryArtist)
+        if (primaryArtist.isNotBlank()) add(lookupTitle, primaryArtist, "explicit")
         add(normalizedLookupTitle, primaryArtist)
         add(primaryArtist, lookupTitle)
         add(lookupTitle, primaryArtist, secondaryArtist)
@@ -545,6 +547,7 @@ object SaavnAudioResolver {
             albumName = albumName,
             downloadLinks = parseDownloadLinks(json, moreInfo),
             thumbnailUrl = parseThumbnail(json, moreInfo),
+            explicitContent = parseExplicitContent(json, moreInfo),
         )
     }
 
@@ -554,6 +557,32 @@ object SaavnAudioResolver {
             is String -> raw.toIntOrNull()
             else -> null
         }?.takeIf { it > 0 }
+    }
+
+
+    private fun parseExplicitContent(json: JSONObject, moreInfo: JSONObject?): Boolean? {
+        fun parseFlag(raw: Any?): Boolean? = when (raw) {
+            is Boolean -> raw
+            is Number -> raw.toInt() > 0
+            is String -> when (raw.trim().lowercase(Locale.ROOT)) {
+                "1", "true", "yes", "y", "explicit" -> true
+                "0", "false", "no", "n", "clean" -> false
+                else -> null
+            }
+            else -> null
+        }
+
+        listOf(
+            json.opt("explicit_content"),
+            json.opt("explicitContent"),
+            json.opt("isExplicit"),
+            json.opt("explicit"),
+            moreInfo?.opt("explicit_content"),
+            moreInfo?.opt("explicitContent"),
+            moreInfo?.opt("isExplicit"),
+            moreInfo?.opt("explicit"),
+        ).forEach { raw -> parseFlag(raw)?.let { return it } }
+        return null
     }
 
     private fun parseThumbnail(json: JSONObject, moreInfo: JSONObject?): String? {
@@ -764,6 +793,7 @@ object SaavnAudioResolver {
         score += queryTokens.intersect(artistTokens).size * 28
         score += qualityScore(candidate.downloadLinks) / 10000
         score += penaltyScore(candidate, normalizedQuery)
+        score += explicitPreferenceScore(candidate, query)
         return score
     }
 
@@ -872,6 +902,7 @@ object SaavnAudioResolver {
 
         score += languageHintScore(candidate, requestedTitleScript, requestedPrimaryArtist)
         score += penaltyScore(candidate, requestedTitle)
+        score += explicitPreferenceScore(candidate, requested.title)
         if (!candidate.thumbnailUrl.isNullOrBlank()) score += 4
         if (candidate.downloadLinks.isNotEmpty()) score += 10
         return score
@@ -898,6 +929,14 @@ object SaavnAudioResolver {
         }
     }
 
+    private fun explicitPreferenceScore(candidate: Candidate, requestedTitle: String): Int {
+        if (textLooksCleanOrCensored(requestedTitle)) return 0
+        var score = 0
+        if (candidate.explicitContent == true) score += 55
+        if (isCleanOrCensoredCandidate(candidate, requestedTitle)) score -= 260
+        return score
+    }
+
     private fun penaltyScore(candidate: Candidate, requestedTitle: String): Int {
         val requestedTerms = extractPenaltyTerms(requestedTitle)
         val candidateText = normalizeTitleCore(candidate.title) + " " +
@@ -916,6 +955,7 @@ object SaavnAudioResolver {
         if ("nightcore" in extraTerms || "lofi" in extraTerms || "lo fi" in extraTerms) score -= 100
         if ("dubbed" in extraTerms || "hindi dubbed" in extraTerms) score -= 160
         if ("devotional" in extraTerms || "bhajan" in extraTerms || "aarti" in extraTerms) score -= 100
+        if ("clean" in extraTerms || "radio edit" in extraTerms || "edited" in extraTerms || "censored" in extraTerms) score -= 260
         return score
     }
 
@@ -945,11 +985,48 @@ object SaavnAudioResolver {
             "devotional",
             "bhajan",
             "aarti",
-        ).forEach { term -> if (normalized.contains(term)) terms += term }
+            "clean",
+            "clean version",
+            "radio edit",
+            "edited",
+            "edited version",
+            "censored",
+            "censored version",
+        ).forEach { term -> if (containsNormalizedTerm(normalized, term)) terms += term }
         return terms
     }
 
+    private fun isCleanOrCensoredCandidate(candidate: Candidate, requestedTitle: String): Boolean {
+        if (textLooksCleanOrCensored(requestedTitle)) return false
+        val editionText = normalizeTitleCore(candidate.title) + " " + normalizeTitleCore(candidate.albumName.orEmpty())
+        return textLooksCleanOrCensored(editionText)
+    }
+
+    private fun textLooksCleanOrCensored(text: String): Boolean {
+        val normalized = normalizeTitleCore(text)
+        return listOf(
+            "clean",
+            "clean version",
+            "radio edit",
+            "edited",
+            "edited version",
+            "censored",
+            "censored version",
+            "non explicit",
+            "non explicit version",
+        ).any { containsNormalizedTerm(normalized, it) }
+    }
+
+    private fun containsNormalizedTerm(text: String, term: String): Boolean {
+        val normalizedTerm = normalizeTitleCore(term)
+        if (text.isBlank() || normalizedTerm.isBlank()) return false
+        val paddedText = " $text "
+        val paddedTerm = " $normalizedTerm "
+        return paddedText.contains(paddedTerm)
+    }
+
     private fun hasUnexpectedVariantTerms(candidate: Candidate, requestedTitle: String): Boolean {
+        if (isCleanOrCensoredCandidate(candidate, requestedTitle)) return true
         val requestedTerms = extractPenaltyTerms(requestedTitle)
         val candidateTerms = extractPenaltyTerms(
             normalizeTitleCore(candidate.title) + " " +
@@ -976,6 +1053,10 @@ object SaavnAudioResolver {
                 "devotional",
                 "bhajan",
                 "aarti",
+                "clean",
+                "radio edit",
+                "edited",
+                "censored",
             )
         }
     }

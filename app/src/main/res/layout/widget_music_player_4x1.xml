@@ -4,35 +4,39 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:padding="6dp"
-    android:background="@android:color/transparent">
+    android:clipToPadding="false"
+    android:background="@drawable/ytm_widget_panel">
 
     <ImageView
         android:id="@+id/widget_background_tint"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:scaleType="centerCrop"
+        android:adjustViewBounds="false"
+        android:scaleType="fitXY"
         android:src="@drawable/ytm_widget_panel" />
 
     <ImageView
         android:id="@+id/widget_background_scrim"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:src="@drawable/ytm_widget_gradient_overlay"
-        android:scaleType="fitXY" />
+        android:adjustViewBounds="false"
+        android:scaleType="fitXY"
+        android:src="@drawable/ytm_widget_gradient_overlay" />
 
     <ImageView
         android:id="@+id/widget_album_art"
-        android:layout_width="52dp"
-        android:layout_height="52dp"
+        android:layout_width="54dp"
+        android:layout_height="54dp"
         android:layout_alignParentStart="true"
         android:layout_centerVertical="true"
+        android:layout_marginStart="2dp"
         android:scaleType="centerCrop"
         android:src="@drawable/ytm_album_placeholder"
         android:contentDescription="Album art" />
 
     <LinearLayout
         android:id="@+id/widget_controls"
-        android:layout_width="132dp"
+        android:layout_width="136dp"
         android:layout_height="wrap_content"
         android:layout_alignParentEnd="true"
         android:layout_centerVertical="true"
@@ -53,7 +57,8 @@
             android:id="@+id/widget_play_pause"
             android:layout_width="44dp"
             android:layout_height="44dp"
-            android:layout_marginHorizontal="4dp"
+            android:layout_marginStart="5dp"
+            android:layout_marginEnd="5dp"
             android:background="@drawable/ytm_button_circle_primary"
             android:padding="10dp"
             android:src="@drawable/ic_ytm_play_arrow"
@@ -111,8 +116,9 @@
         android:layout_width="match_parent"
         android:layout_height="3dp"
         android:layout_alignParentBottom="true"
-        android:layout_marginStart="14dp"
-        android:layout_marginEnd="14dp"
+        android:layout_marginStart="15dp"
+        android:layout_marginEnd="15dp"
+        android:layout_marginBottom="2dp"
         android:indeterminate="false"
         android:max="1000"
         android:progress="0"

@@ -29,7 +29,7 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
 
     companion object {
         private const val DEFAULT_BG = 0xFF111111.toInt()
-        private const val BACKGROUND_ALPHA = 235
+        private const val BACKGROUND_ALPHA = 218
         private val widgetCacheLock = Any()
 
         @Volatile
@@ -112,6 +112,8 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
         val intent = Intent(context, MusicService::class.java).apply { this.action = action }
         return PendingIntent.getService(context, requestCode, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     }
+
+    private fun dp(context: Context, value: Float): Float = value * context.resources.displayMetrics.density
 
     private fun getRoundedBitmap(bitmap: Bitmap, radiusPx: Float): Bitmap {
         val size = minOf(bitmap.width, bitmap.height)
@@ -206,9 +208,9 @@ class WideMusicWidgetProvider : AppWidgetProvider() {
                 connection.getInputStream().use { input -> BitmapFactory.decodeStream(input) }
             }.getOrNull()?.let { bitmap ->
                 val scaled = scaleBitmapForWidget(bitmap)
-                val rounded = getRoundedBitmap(scaled, 18f)
+                val rounded = getRoundedBitmap(scaled, dp(context, 14f))
                 val bgColor = chooseBackgroundColor(scaled)
-                val background = createRoundedBackgroundBitmap(720, 150, bgColor, 28f)
+                val background = createRoundedBackgroundBitmap(720, 150, bgColor, dp(context, 30f))
                 putCachedVisuals(albumArtUrl, rounded, background)
                 rounded to background
             }
