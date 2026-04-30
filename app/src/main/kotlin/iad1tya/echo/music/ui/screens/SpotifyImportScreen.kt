@@ -163,7 +163,7 @@ fun SpotifyImportScreen(
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                text = "If fetch fails, use a playlist transfer service",
+                                text = "If fetch fails, the playlist may be private or Spotify may be rate-limiting access",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -184,7 +184,7 @@ fun SpotifyImportScreen(
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
 
                             Text(
-                                text = "Important: Currently supports 100 songs per playlist.",
+                                text = "Supports full public Spotify playlists. Echo fetches tracks in 100-track Spotify pages until the playlist is complete.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                                 color = MaterialTheme.colorScheme.error,
