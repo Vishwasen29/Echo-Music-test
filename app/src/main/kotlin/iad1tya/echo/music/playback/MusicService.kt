@@ -403,41 +403,50 @@ class MusicService :
         saavnRetryCount[mediaId] = (saavnRetryCount[mediaId] ?: 0) + 1
         forcedYoutubeFallbackIds.remove(mediaId)
         songUrlCache.remove(mediaId)
+        val resumePositionMs = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
         updatePlaybackSourceTrace(
             mediaId = mediaId,
             attemptedSource = "JioSaavn",
             finalSource = "JioSaavn",
-            detail = detail,
+            detail = "$detail; resuming at ${resumePositionMs / 1000}s",
         )
-        Log.d("MusicService", "Retrying $mediaId with JioSaavn: $detail")
+        Log.d("MusicService", "Retrying $mediaId with JioSaavn from ${resumePositionMs}ms: $detail")
+        runCatching { playerCache.removeResource(mediaId) }
+            .onFailure { error -> Log.e("MusicService", "Failed to clear transient player cache for $mediaId before Saavn retry", error) }
         val currentIndex = player.currentMediaItemIndex
         player.stop()
         if (currentIndex >= 0) {
-            player.seekToDefaultPosition(currentIndex)
+            player.seekTo(currentIndex, resumePositionMs)
         }
         player.prepare()
         player.playWhenReady = true
     }
 
-    private fun retryCurrentTrackWithYoutube(mediaId: String) {
+    private fun retryCurrentTrackWithYoutube(
+        mediaId: String,
+        detail: String = "Retrying with YouTube Music after JioSaavn playback failed",
+    ) {
         if (isYoutubeFallbackCoolingDown(mediaId)) {
             Log.d("MusicService", "Skipping YouTube fallback for $mediaId because it is cooling down")
             return
         }
+        val resumePositionMs = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
         forcedYoutubeFallbackIds.add(mediaId)
         saavnRetryCount.remove(mediaId)
         updatePlaybackSourceTrace(
             mediaId = mediaId,
             attemptedSource = "JioSaavn",
             finalSource = "YouTube Music",
-            detail = "Retrying with YouTube Music after JioSaavn playback failed",
+            detail = "$detail; resuming at ${resumePositionMs / 1000}s",
         )
-        Log.d("MusicService", "Retrying $mediaId with YouTube Music after JioSaavn-backed playback failed")
+        Log.d("MusicService", "Retrying $mediaId with YouTube Music from ${resumePositionMs}ms after JioSaavn-backed playback failed")
         songUrlCache.remove(mediaId)
+        runCatching { playerCache.removeResource(mediaId) }
+            .onFailure { error -> Log.e("MusicService", "Failed to clear transient Saavn cache for $mediaId before YouTube fallback", error) }
         val currentIndex = player.currentMediaItemIndex
         player.stop()
         if (currentIndex >= 0) {
-            player.seekToDefaultPosition(currentIndex)
+            player.seekTo(currentIndex, resumePositionMs)
         }
         player.prepare()
         player.playWhenReady = true
@@ -2729,21 +2738,35 @@ class MusicService :
             }
             // CHATGPT_SAAVN_429_FALLBACK_V1_END
 
+            // CHATGPT_SAAVN_RESUME_FALLBACK_V1_START
             if (mediaId != null && shouldRetrySaavnBeforeYoutube(mediaId, error)) {
-                retryCurrentTrackWithSaavn(mediaId, "Transient JioSaavn network/CDN failure")
-                return
+                val currentPositionMs = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
+                if (currentPositionMs < 30_000L) {
+                    retryCurrentTrackWithSaavn(mediaId, "Transient JioSaavn network/CDN failure")
+                    return
+                }
+                Log.d(
+                    "MusicService",
+                    "JioSaavn failed after ${currentPositionMs}ms for $mediaId; avoiding a replay-from-start loop and trying YouTube Music"
+                )
             }
 
             if (
                 mediaId != null &&
                 isSaavnBackedTrack(mediaId) &&
                 !forcedYoutubeFallbackIds.contains(mediaId) &&
-                !isNetworkRelatedError(error) &&
-                !isYoutubeFallbackCoolingDown(mediaId)
+                !mediaId.startsWith("saavn:") &&
+                !isYoutubeFallbackCoolingDown(mediaId) &&
+                isNetworkConnected.value
             ) {
-                retryCurrentTrackWithYoutube(mediaId)
+                val currentPositionMs = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
+                retryCurrentTrackWithYoutube(
+                    mediaId,
+                    "JioSaavn playback failed at ${currentPositionMs / 1000}s; resuming with YouTube Music"
+                )
                 return
             }
+            // CHATGPT_SAAVN_RESUME_FALLBACK_V1_END
 
             if (mediaId != null) {
                 performAggressiveCacheClear(mediaId)
@@ -2933,16 +2956,33 @@ class MusicService :
 
         retryJob?.cancel()
         retryJob = scope.launch {
+            val resumePositionMs = runCatching { player.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
             performAggressiveCacheClear(mediaId)
             delay(RETRY_DELAY_MS)
 
-            // Force re-prepare from position 0 to avoid range issues
+            if (
+                isSaavnBackedTrack(mediaId) &&
+                !mediaId.startsWith("saavn:") &&
+                !forcedYoutubeFallbackIds.contains(mediaId) &&
+                !isYoutubeFallbackCoolingDown(mediaId) &&
+                isNetworkConnected.value
+            ) {
+                retryCurrentTrackWithYoutube(
+                    mediaId,
+                    "JioSaavn CDN rejected the byte range; switching source instead of restarting"
+                )
+                return@launch
+            }
+
             val currentIndex = player.currentMediaItemIndex
-            player.seekTo(currentIndex, 0)
+            val targetPositionMs = if (isSaavnBackedTrack(mediaId)) resumePositionMs else 0L
+            player.seekTo(currentIndex, targetPositionMs)
             player.prepare()
-            Log.d("MusicService", "Retrying playback for $mediaId after 416 error (from position 0)")
+            player.playWhenReady = true
+            Log.d("MusicService", "Retrying playback for $mediaId after 416 error from ${targetPositionMs}ms")
         }
     }
+
     private fun handlePageReloadError(mediaId: String?) {
         if (mediaId == null) { handleFinalFailure(); return }
         incrementRetryCount(mediaId)
