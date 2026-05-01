@@ -1,0 +1,138 @@
+package iad1tya.echo.music.spotify
+
+import android.app.Activity
+import android.content.Intent
+import android.graphics.Color
+import android.os.Bundle
+import android.view.View
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
+import android.widget.Toast
+import iad1tya.echo.music.MainActivity
+import iad1tya.echo.music.utils.SpotifyAuthStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+
+class SpotifyBrowserLoginActivity : Activity() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private lateinit var webView: WebView
+    private lateinit var progress: ProgressBar
+    private lateinit var status: TextView
+    private var captureInFlight = false
+    private var captured = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        CookieManager.getInstance().setAcceptCookie(true)
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.rgb(18, 18, 18))
+        }
+
+        status = TextView(this).apply {
+            text = "Login to Spotify in the browser below. When Spotify opens, Echo will capture the session automatically."
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding(24, 20, 24, 12)
+        }
+        root.addView(status, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+
+        progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        root.addView(progress, LinearLayout.LayoutParams.MATCH_PARENT, 6)
+
+        webView = WebView(this).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.loadsImagesAutomatically = true
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                    progress.progress = newProgress
+                    progress.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
+                }
+            }
+            webViewClient = object : WebViewClient() {
+                override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean = false
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    maybeCapture(url.orEmpty())
+                }
+            }
+        }
+        root.addView(webView, LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+
+        val doneButton = Button(this).apply {
+            text = "Done / Check Login"
+            setOnClickListener { maybeCapture(webView.url.orEmpty(), force = true) }
+        }
+        root.addView(doneButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+
+        setContentView(root)
+
+        webView.loadUrl(LOGIN_URL)
+    }
+
+    private fun maybeCapture(url: String, force: Boolean = false) {
+        if (captured || captureInFlight) return
+        val shouldTry = force || url.contains("open.spotify.com", ignoreCase = true)
+        if (!shouldTry) return
+
+        CookieManager.getInstance().flush()
+        val cookies = listOfNotNull(
+            CookieManager.getInstance().getCookie("https://open.spotify.com"),
+            CookieManager.getInstance().getCookie("https://accounts.spotify.com"),
+            CookieManager.getInstance().getCookie("https://spotify.com"),
+        ).joinToString("; ")
+
+        if (cookies.isBlank()) {
+            status.text = "Spotify cookies are not ready yet. Finish login, wait for Spotify to open, then tap Done."
+            return
+        }
+
+        captureInFlight = true
+        status.text = "Checking Spotify login..."
+        scope.launch {
+            val result = SpotifyAuthStore.captureBrowserSession(this@SpotifyBrowserLoginActivity, cookies)
+            captureInFlight = false
+            if (result.isSuccess) {
+                captured = true
+                Toast.makeText(this@SpotifyBrowserLoginActivity, "Spotify connected", Toast.LENGTH_SHORT).show()
+                val intent = Intent(this@SpotifyBrowserLoginActivity, MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                startActivity(intent)
+                finish()
+            } else {
+                val message = result.exceptionOrNull()?.message ?: "Spotify login was not captured"
+                status.text = "$message\nIf Spotify is open and logged in, tap Done / Check Login again."
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        runCatching { webView.destroy() }
+        super.onDestroy()
+    }
+
+    companion object {
+        private const val LOGIN_URL =
+            "https://accounts.spotify.com/en/login?continue=https%3A%2F%2Fopen.spotify.com%2F"
+    }
+}

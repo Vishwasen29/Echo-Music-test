@@ -4,50 +4,39 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.util.Log
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.datastore.preferences.core.stringPreferencesKey
+import android.webkit.CookieManager
 import com.google.gson.Gson
 import com.google.gson.JsonObject
-import iad1tya.echo.music.BuildConfig
+import iad1tya.echo.music.spotify.SpotifyBrowserLoginActivity
 import java.io.IOException
-import java.security.MessageDigest
-import java.security.SecureRandom
-import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
 object SpotifyAuthStore {
     private const val TAG = "SpotifyAuthStore"
+
+    /** Kept for compatibility with older redirect receiver code. Browser login does not use this URI. */
     const val REDIRECT_URI = "echo-spotify-auth://callback"
+
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36"
 
     private val client = OkHttpClient()
     private val gson = Gson()
-    private val random = SecureRandom()
 
-    private val ClientIdKey = stringPreferencesKey("spotify_oauth_client_id")
-    private val AccessTokenKey = stringPreferencesKey("spotify_oauth_access_token")
-    private val RefreshTokenKey = stringPreferencesKey("spotify_oauth_refresh_token")
-    private val ExpiresAtMsKey = longPreferencesKey("spotify_oauth_expires_at_ms")
-    private val ScopeKey = stringPreferencesKey("spotify_oauth_scope")
-    private val CodeVerifierKey = stringPreferencesKey("spotify_oauth_code_verifier")
-    private val StateKey = stringPreferencesKey("spotify_oauth_state")
-    private val ProfileNameKey = stringPreferencesKey("spotify_profile_name")
-    private val ProfileEmailKey = stringPreferencesKey("spotify_profile_email")
-    private val ProfileIdKey = stringPreferencesKey("spotify_profile_id")
-    private val ProfileImageKey = stringPreferencesKey("spotify_profile_image")
+    private val BrowserCookieKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_browser_cookie")
+    private val AccessTokenKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_web_access_token")
+    private val ExpiresAtMsKey = androidx.datastore.preferences.core.longPreferencesKey("spotify_web_expires_at_ms")
+    private val ProfileNameKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_profile_name")
+    private val ProfileEmailKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_profile_email")
+    private val ProfileIdKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_profile_id")
+    private val ProfileImageKey = androidx.datastore.preferences.core.stringPreferencesKey("spotify_profile_image")
 
-    val requiredScopes = listOf(
-        "playlist-read-private",
-        "playlist-read-collaborative",
-        "user-library-read",
-        "user-read-private",
-        "user-read-email",
-    )
+    /** Browser-cookie login requests permissions through Spotify's own web player session. */
+    val requiredScopes = emptyList<String>()
 
     data class SpotifyProfile(
         val id: String,
@@ -56,117 +45,84 @@ object SpotifyAuthStore {
         val imageUrl: String?,
     )
 
-    suspend fun setClientId(context: Context, clientId: String) {
-        withContext(Dispatchers.IO) {
-            context.dataStore.edit { prefs ->
-                if (clientId.isBlank()) {
-                    prefs.remove(ClientIdKey)
-                } else {
-                    prefs[ClientIdKey] = clientId.trim()
-                }
-            }
-        }
-    }
+    /** Compatibility no-op. This browser-login patch does not ask users to paste a Client ID. */
+    suspend fun setClientId(context: Context, clientId: String) = Unit
 
-    suspend fun getClientId(context: Context): String = withContext(Dispatchers.IO) {
-        val stored = context.dataStore.data.first()[ClientIdKey]?.trim().orEmpty()
-        stored.ifBlank { BuildConfig.SPOTIFY_CLIENT_ID.trim() }
-    }
+    /** Compatibility no-op. */
+    suspend fun getClientId(context: Context): String = ""
 
     suspend fun hasStoredToken(context: Context): Boolean = withContext(Dispatchers.IO) {
         val prefs = context.dataStore.data.first()
-        !prefs[AccessTokenKey].isNullOrBlank() || !prefs[RefreshTokenKey].isNullOrBlank()
+        !prefs[AccessTokenKey].isNullOrBlank() || !prefs[BrowserCookieKey].isNullOrBlank()
     }
 
     suspend fun getStoredDisplayName(context: Context): String = withContext(Dispatchers.IO) {
         context.dataStore.data.first()[ProfileNameKey].orEmpty()
     }
 
-    suspend fun createLoginIntent(context: Context, rawClientId: String): Intent = withContext(Dispatchers.IO) {
-        val clientId = rawClientId.trim().ifBlank { getClientId(context) }
-        require(clientId.isNotBlank()) { "Spotify Client ID is required" }
-
-        val codeVerifier = randomUrlSafeString(64)
-        val codeChallenge = codeChallengeS256(codeVerifier)
-        val state = randomUrlSafeString(32)
-
-        context.dataStore.edit { prefs ->
-            prefs[ClientIdKey] = clientId
-            prefs[CodeVerifierKey] = codeVerifier
-            prefs[StateKey] = state
-        }
-
-        val uri = Uri.Builder()
-            .scheme("https")
-            .authority("accounts.spotify.com")
-            .path("authorize")
-            .appendQueryParameter("client_id", clientId)
-            .appendQueryParameter("response_type", "code")
-            .appendQueryParameter("redirect_uri", REDIRECT_URI)
-            .appendQueryParameter("code_challenge_method", "S256")
-            .appendQueryParameter("code_challenge", codeChallenge)
-            .appendQueryParameter("state", state)
-            .appendQueryParameter("scope", requiredScopes.joinToString(" "))
-            .build()
-
-        Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    suspend fun createLoginIntent(context: Context, rawClientId: String = ""): Intent = withContext(Dispatchers.IO) {
+        Intent(context, SpotifyBrowserLoginActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     }
 
-    suspend fun handleRedirect(context: Context, uri: Uri?): Result<Unit> = withContext(Dispatchers.IO) {
+    /**
+     * Called by SpotifyBrowserLoginActivity after the user signs in inside the WebView.
+     * The stored cookie is used to obtain the same Spotify web-player bearer token that the browser uses.
+     */
+    suspend fun captureBrowserSession(context: Context, rawCookies: String): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            require(uri != null) { "Missing Spotify redirect URI" }
-            uri.getQueryParameter("error")?.let { error ->
-                throw IllegalStateException("Spotify login failed: $error")
-            }
-            val code = uri.getQueryParameter("code") ?: throw IllegalStateException("Spotify login returned no authorization code")
-            val returnedState = uri.getQueryParameter("state") ?: throw IllegalStateException("Spotify login returned no state")
-
-            val prefs = context.dataStore.data.first()
-            val expectedState = prefs[StateKey] ?: throw IllegalStateException("Missing saved Spotify login state")
-            val verifier = prefs[CodeVerifierKey] ?: throw IllegalStateException("Missing saved Spotify PKCE verifier")
-            val clientId = prefs[ClientIdKey]?.takeIf { it.isNotBlank() }
-                ?: BuildConfig.SPOTIFY_CLIENT_ID.takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException("Missing Spotify Client ID")
-
-            check(returnedState == expectedState) { "Spotify login state mismatch" }
-            exchangeCodeForTokens(context, clientId, verifier, code)
+            val cookies = normalizeCookies(rawCookies)
+            require(cookies.isNotBlank()) { "Spotify login cookie was empty. Finish login and try again." }
+            val token = fetchWebAccessToken(cookies)
+            saveWebToken(context, cookies, token.accessToken, token.expiresAtMs)
+            fetchCurrentUser(context)
         }
+    }
+
+    /** Compatibility method for the old PKCE redirect activity. */
+    suspend fun handleRedirect(context: Context, uri: Uri?): Result<Unit> = withContext(Dispatchers.IO) {
+        Result.failure(
+            IllegalStateException(
+                "This build uses browser-based Spotify login. Open Spotify Library and tap Browser Login."
+            )
+        )
     }
 
     suspend fun getValidAccessToken(context: Context): String? = withContext(Dispatchers.IO) {
         val prefs = context.dataStore.data.first()
-        val accessToken = prefs[AccessTokenKey]
+        val storedToken = prefs[AccessTokenKey]
         val expiresAt = prefs[ExpiresAtMsKey] ?: 0L
         val now = System.currentTimeMillis()
-        if (!accessToken.isNullOrBlank() && expiresAt > now + 60_000L) {
-            return@withContext accessToken
+        if (!storedToken.isNullOrBlank() && expiresAt > now + 60_000L) {
+            return@withContext storedToken
         }
 
-        val refreshToken = prefs[RefreshTokenKey]
-        val clientId = prefs[ClientIdKey]?.takeIf { it.isNotBlank() }
-            ?: BuildConfig.SPOTIFY_CLIENT_ID.takeIf { it.isNotBlank() }
-        if (refreshToken.isNullOrBlank() || clientId.isNullOrBlank()) {
-            return@withContext null
+        val cookies = prefs[BrowserCookieKey]?.takeIf { it.isNotBlank() } ?: return@withContext null
+        return@withContext try {
+            val token = fetchWebAccessToken(cookies)
+            saveWebToken(context, cookies, token.accessToken, token.expiresAtMs)
+            token.accessToken
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not refresh Spotify web-player token", e)
+            null
         }
-
-        refreshAccessToken(context, clientId, refreshToken)
     }
 
     suspend fun fetchCurrentUser(context: Context): SpotifyProfile? = withContext(Dispatchers.IO) {
-        val token = getValidAccessToken(context) ?: return@withContext null
+        val token = getValidAccessToken(context) ?: return@withContext storedProfile(context)
         val request = Request.Builder()
             .url("https://api.spotify.com/v1/me")
             .header("Authorization", "Bearer $token")
+            .header("User-Agent", USER_AGENT)
             .build()
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 Log.w(TAG, "Failed to fetch Spotify profile: HTTP ${response.code}")
-                return@withContext null
+                return@withContext storedProfile(context)
             }
             val json = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
             val images = json.getAsJsonArray("images")
-            val imageUrl = images?.firstOrNull()?.asJsonObject?.get("url")?.takeUnless { it.isJsonNull }?.asString
+            val imageUrl = images?.firstOrNull()?.asJsonObject?.optString("url")
             val profile = SpotifyProfile(
                 id = json.optString("id").orEmpty(),
                 displayName = json.optString("display_name").ifBlankOrNull { json.optString("id").orEmpty() },
@@ -183,102 +139,86 @@ object SpotifyAuthStore {
         }
     }
 
-    suspend fun clearAuth(context: Context) = withContext(Dispatchers.IO) {
-        context.dataStore.edit { prefs ->
-            prefs.remove(AccessTokenKey)
-            prefs.remove(RefreshTokenKey)
-            prefs.remove(ExpiresAtMsKey)
-            prefs.remove(ScopeKey)
-            prefs.remove(CodeVerifierKey)
-            prefs.remove(StateKey)
-            prefs.remove(ProfileNameKey)
-            prefs.remove(ProfileEmailKey)
-            prefs.remove(ProfileIdKey)
-            prefs.remove(ProfileImageKey)
+    suspend fun clearAuth(context: Context) {
+        withContext(Dispatchers.IO) {
+            context.dataStore.edit { prefs ->
+                prefs.remove(BrowserCookieKey)
+                prefs.remove(AccessTokenKey)
+                prefs.remove(ExpiresAtMsKey)
+                prefs.remove(ProfileNameKey)
+                prefs.remove(ProfileEmailKey)
+                prefs.remove(ProfileIdKey)
+                prefs.remove(ProfileImageKey)
+            }
+        }
+        withContext(Dispatchers.Main) {
+            runCatching {
+                CookieManager.getInstance().removeAllCookies(null)
+                CookieManager.getInstance().flush()
+            }
         }
     }
 
-    private fun exchangeCodeForTokens(context: Context, clientId: String, codeVerifier: String, code: String) {
-        val body = FormBody.Builder()
-            .add("client_id", clientId)
-            .add("grant_type", "authorization_code")
-            .add("code", code)
-            .add("redirect_uri", REDIRECT_URI)
-            .add("code_verifier", codeVerifier)
-            .build()
+    private suspend fun saveWebToken(context: Context, cookies: String, accessToken: String, expiresAtMs: Long) {
+        context.dataStore.edit { prefs ->
+            prefs[BrowserCookieKey] = cookies
+            prefs[AccessTokenKey] = accessToken
+            prefs[ExpiresAtMsKey] = expiresAtMs
+        }
+    }
 
+    private suspend fun storedProfile(context: Context): SpotifyProfile? {
+        val prefs = context.dataStore.data.first()
+        val id = prefs[ProfileIdKey].orEmpty()
+        val name = prefs[ProfileNameKey].orEmpty()
+        if (id.isBlank() && name.isBlank()) return null
+        return SpotifyProfile(
+            id = id,
+            displayName = name.ifBlank { "Spotify" },
+            email = prefs[ProfileEmailKey],
+            imageUrl = prefs[ProfileImageKey],
+        )
+    }
+
+    private data class WebToken(val accessToken: String, val expiresAtMs: Long)
+
+    private fun fetchWebAccessToken(cookies: String): WebToken {
         val request = Request.Builder()
-            .url("https://accounts.spotify.com/api/token")
-            .post(body)
+            .url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "application/json")
+            .header("Cookie", cookies)
             .build()
 
         client.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Spotify token exchange failed: HTTP ${response.code} ${responseBody.take(240)}")
+                throw IOException("Spotify web token failed: HTTP ${response.code} ${responseBody.take(160)}")
             }
             val json = gson.fromJson(responseBody, JsonObject::class.java)
-            saveTokenResponse(context, json, preserveRefreshToken = null)
+            val accessToken = json.optString("accessToken")
+                ?: json.optString("access_token")
+                ?: throw IOException("Spotify web token response missing accessToken")
+            val expiresAt = json.optLong("accessTokenExpirationTimestampMs", 0L)
+                .takeIf { it > 0L }
+                ?: json.optLong("accessTokenExpirationTimestamp", 0L).takeIf { it > 0L }
+                ?: (System.currentTimeMillis() + 55L * 60L * 1000L)
+            return WebToken(accessToken, expiresAt)
         }
     }
 
-    private fun refreshAccessToken(context: Context, clientId: String, refreshToken: String): String? {
-        val body = FormBody.Builder()
-            .add("client_id", clientId)
-            .add("grant_type", "refresh_token")
-            .add("refresh_token", refreshToken)
-            .build()
-
-        val request = Request.Builder()
-            .url("https://accounts.spotify.com/api/token")
-            .post(body)
-            .build()
-
-        return try {
-            client.newCall(request).execute().use { response ->
-                val responseBody = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    Log.w(TAG, "Spotify token refresh failed: HTTP ${response.code} ${responseBody.take(160)}")
-                    return null
-                }
-                val json = gson.fromJson(responseBody, JsonObject::class.java)
-                saveTokenResponse(context, json, preserveRefreshToken = refreshToken)
-                json.optString("access_token")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Spotify token refresh failed", e)
-            null
+    private fun normalizeCookies(raw: String): String {
+        val pieces = raw
+            .replace("\n", ";")
+            .split(';')
+            .map { it.trim() }
+            .filter { it.contains('=') }
+        val byName = linkedMapOf<String, String>()
+        for (piece in pieces) {
+            val name = piece.substringBefore('=').trim()
+            if (name.isNotBlank()) byName[name] = piece
         }
-    }
-
-    private fun saveTokenResponse(context: Context, json: JsonObject, preserveRefreshToken: String?) {
-        val accessToken = json.optString("access_token") ?: throw IllegalStateException("Spotify response missing access_token")
-        val refreshToken = json.optString("refresh_token") ?: preserveRefreshToken
-        val expiresInSeconds = json.optLong("expires_in", 3600L).coerceAtLeast(60L)
-        val expiresAt = System.currentTimeMillis() + (expiresInSeconds * 1000L)
-        val scope = json.optString("scope") ?: requiredScopes.joinToString(" ")
-
-        kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-            context.dataStore.edit { prefs ->
-                prefs[AccessTokenKey] = accessToken
-                if (!refreshToken.isNullOrBlank()) prefs[RefreshTokenKey] = refreshToken
-                prefs[ExpiresAtMsKey] = expiresAt
-                prefs[ScopeKey] = scope
-                prefs.remove(CodeVerifierKey)
-                prefs.remove(StateKey)
-            }
-        }
-    }
-
-    private fun randomUrlSafeString(byteCount: Int): String {
-        val bytes = ByteArray(byteCount)
-        random.nextBytes(bytes)
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
-    }
-
-    private fun codeChallengeS256(verifier: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII))
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        return byName.values.joinToString("; ")
     }
 
     private fun JsonObject.optString(key: String): String? =

@@ -78,6 +78,7 @@ fun SpotifyImportScreen(
     val database = LocalDatabase.current
     val scope = rememberCoroutineScope()
 
+    var clientId by rememberSaveable { mutableStateOf("") }
     var spotifyUrl by rememberSaveable { mutableStateOf("") }
     var profile by remember { mutableStateOf<SpotifyAuthStore.SpotifyProfile?>(null) }
     var playlists by remember { mutableStateOf<List<SpotifyImportHelper.SpotifyPlaylist>>(emptyList()) }
@@ -88,6 +89,7 @@ fun SpotifyImportScreen(
     var isImporting by remember { mutableStateOf(false) }
     var importProgress by remember { mutableIntStateOf(0) }
     var totalTracks by remember { mutableIntStateOf(0) }
+    var showSetup by rememberSaveable { mutableStateOf(false) }
 
     suspend fun refreshSpotifyState(loadPlaylists: Boolean = false) {
         profile = SpotifyAuthStore.fetchCurrentUser(context)
@@ -101,7 +103,7 @@ fun SpotifyImportScreen(
         importedSongs = songs
         totalTracks = songs.size
         statusText = if (songs.isEmpty()) {
-            "No songs found. Open Browser Login first for private playlists, or check the playlist URL."
+            "No songs found. Login with Spotify for private playlists, or check the playlist URL."
         } else {
             "Found ${songs.size} tracks in \"$playlistName\""
         }
@@ -180,6 +182,7 @@ fun SpotifyImportScreen(
     }
 
     LaunchedEffect(Unit) {
+        clientId = SpotifyAuthStore.getClientId(context)
         refreshSpotifyState(loadPlaylists = false)
     }
 
@@ -218,32 +221,28 @@ fun SpotifyImportScreen(
         ) {
             item {
                 SpotifyLoginCard(
+                    clientId = clientId,
+                    onClientIdChange = { clientId = it.trim() },
                     profile = profile,
                     isBusy = isLoading || isImporting,
-                    onLogin = {
-                        try {
-                            context.startActivity(SpotifyAuthStore.createLoginIntent(context, ""))
-                        } catch (e: ActivityNotFoundException) {
-                            Toast.makeText(context, "Could not open Spotify browser login", Toast.LENGTH_LONG).show()
-                        } catch (e: Exception) {
-                            Toast.makeText(context, e.message ?: "Spotify login failed", Toast.LENGTH_LONG).show()
+                    showSetup = showSetup,
+                    onToggleSetup = { showSetup = !showSetup },
+                    onSaveClientId = {
+                        scope.launch {
+                            SpotifyAuthStore.setClientId(context, clientId)
+                            Toast.makeText(context, "Spotify Client ID saved", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    onRefresh = {
+                    onLogin = {
                         scope.launch {
-                            isLoading = true
-                            statusText = "Checking Spotify session..."
                             try {
-                                refreshSpotifyState(loadPlaylists = false)
-                                statusText = if (profile == null) {
-                                    "Not connected yet. Tap Browser Login and finish Spotify login."
-                                } else {
-                                    "Spotify connected as ${profile?.displayName ?: "Spotify"}."
-                                }
+                                SpotifyAuthStore.setClientId(context, clientId)
+                                val intent = SpotifyAuthStore.createLoginIntent(context, clientId)
+                                context.startActivity(intent)
+                            } catch (e: ActivityNotFoundException) {
+                                Toast.makeText(context, "No browser found for Spotify login", Toast.LENGTH_LONG).show()
                             } catch (e: Exception) {
-                                statusText = "Spotify session check failed: ${e.message}"
-                            } finally {
-                                isLoading = false
+                                Toast.makeText(context, e.message ?: "Spotify login failed", Toast.LENGTH_LONG).show()
                             }
                         }
                     },
@@ -252,7 +251,6 @@ fun SpotifyImportScreen(
                             SpotifyAuthStore.clearAuth(context)
                             profile = null
                             playlists = emptyList()
-                            importedSongs = emptyList()
                             statusText = "Signed out of Spotify."
                         }
                     },
@@ -272,7 +270,7 @@ fun SpotifyImportScreen(
                                 try {
                                     refreshSpotifyState(loadPlaylists = true)
                                     statusText = if (playlists.isEmpty()) {
-                                        "No playlists loaded. Finish Browser Login first, then tap Load Library again."
+                                        "No playlists loaded. Make sure Spotify login completed and scopes were granted."
                                     } else {
                                         "Loaded ${playlists.size} Spotify playlists."
                                     }
@@ -350,7 +348,7 @@ fun SpotifyImportScreen(
                                 }
                                 scope.launch {
                                     isLoading = true
-                                    statusText = "Fetching playlist with full pagination..."
+                                    statusText = "Fetching playlist..."
                                     try {
                                         val (name, songs) = SpotifyImportHelper.getPlaylistSongs(context, spotifyUrl)
                                         setFetchedTracks(name, songs)
@@ -362,10 +360,10 @@ fun SpotifyImportScreen(
                                 }
                             },
                             enabled = !isLoading && !isImporting,
+                            modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954), contentColor = Color.White),
                         ) {
-                            Text("Fetch All Tracks")
+                            Text("Fetch Playlist")
                         }
                     }
                 }
@@ -379,43 +377,43 @@ fun SpotifyImportScreen(
                         fontWeight = FontWeight.Bold,
                     )
                 }
+
                 items(playlists, key = { it.id }) { playlist ->
                     Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable(enabled = !isLoading && !isImporting) {
-                                scope.launch {
-                                    isLoading = true
-                                    statusText = "Loading ${playlist.name} with full pagination..."
-                                    try {
-                                        val (name, songs) = SpotifyImportHelper.fetchPlaylistTracks(context, playlist.id)
-                                        setFetchedTracks(name.ifBlank { playlist.name }, songs)
-                                    } catch (e: Exception) {
-                                        statusText = "Playlist load failed: ${e.message}"
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            },
+                        modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 12.dp),
+                                .clickable {
+                                    scope.launch {
+                                        isLoading = true
+                                        statusText = "Loading ${playlist.name}..."
+                                        try {
+                                            val (name, songs) = SpotifyImportHelper.fetchPlaylistTracks(context, playlist.id)
+                                            setFetchedTracks(name.ifBlank { playlist.name }, songs)
+                                        } catch (e: Exception) {
+                                            statusText = "Playlist load failed: ${e.message}"
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                }
+                                .padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             Icon(
                                 painter = painterResource(R.drawable.ic_spotify),
                                 contentDescription = null,
+                                modifier = Modifier.size(26.dp),
                                 tint = Color(0xFF1DB954),
-                                modifier = Modifier.size(28.dp),
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    playlist.name,
+                                    text = playlist.name,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     style = MaterialTheme.typography.bodyLarge,
@@ -537,10 +535,14 @@ fun SpotifyImportScreen(
 
 @Composable
 private fun SpotifyLoginCard(
+    clientId: String,
+    onClientIdChange: (String) -> Unit,
     profile: SpotifyAuthStore.SpotifyProfile?,
     isBusy: Boolean,
+    showSetup: Boolean,
+    onToggleSetup: () -> Unit,
+    onSaveClientId: () -> Unit,
     onLogin: () -> Unit,
-    onRefresh: () -> Unit,
     onSignOut: () -> Unit,
 ) {
     Card(
@@ -566,18 +568,12 @@ private fun SpotifyLoginCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Spotify", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(
-                        text = profile?.let { "Connected as ${it.displayName}" } ?: "Browser login like Spotube: no Client ID screen",
+                        text = profile?.let { "Connected as ${it.displayName}" } ?: "Connect to load playlists and liked songs",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-
-            Text(
-                text = "Echo uses Spotify's browser session to fetch playlists/liked songs, then imports tracks into Echo's existing JioSaavn + YouTube playback flow.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
@@ -586,17 +582,41 @@ private fun SpotifyLoginCard(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954), contentColor = Color.White),
                 ) {
-                    Text(if (profile == null) "Browser Login" else "Reconnect")
+                    Text(if (profile == null) "Login with Spotify" else "Reconnect")
                 }
                 FilledTonalButton(
-                    onClick = onRefresh,
+                    onClick = onToggleSetup,
                     enabled = !isBusy,
                     shape = RoundedCornerShape(12.dp),
                 ) {
-                    Text("Check")
+                    Text(if (showSetup) "Hide setup" else "Setup")
                 }
                 if (profile != null) {
                     TextButton(onClick = onSignOut, enabled = !isBusy) { Text("Sign out") }
+                }
+            }
+
+            if (showSetup) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                Text(
+                    text = "Create a Spotify Developer app, add redirect URI ${SpotifyAuthStore.REDIRECT_URI}, then paste the Client ID here. No client secret is needed for PKCE.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = clientId,
+                    onValueChange = onClientIdChange,
+                    label = { Text("Spotify Client ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                )
+                FilledTonalButton(
+                    onClick = onSaveClientId,
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Save Client ID")
                 }
             }
         }
