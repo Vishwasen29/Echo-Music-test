@@ -63,8 +63,8 @@ class SpotifyBrowserLoginActivity : Activity() {
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webChromeClient = object : WebChromeClient() {
                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                    this@SpotifyBrowserLoginActivity.progress.progress = newProgress
-                    this@SpotifyBrowserLoginActivity.progress.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
+                    progress.progress = newProgress
+                    progress.visibility = if (newProgress >= 100) View.GONE else View.VISIBLE
                 }
             }
             webViewClient = object : WebViewClient() {
@@ -76,7 +76,7 @@ class SpotifyBrowserLoginActivity : Activity() {
                 }
             }
         }
-        root.addView(webView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(webView, LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
 
         val doneButton = Button(this).apply {
             text = "Done / Check Login"
