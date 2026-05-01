@@ -414,15 +414,6 @@ fun HomeScreen(
                 )
             }
 
-            item(key = "spotify_login_card") {
-                SpotifyHomeCard(
-                    navController = navController,
-                    modifier = Modifier
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .animateItem()
-                )
-            }
-
             if (selectedChip == null) {
                 quickPicks?.takeIf { it.isNotEmpty() }?.let { quickPicks ->
                     item(key = "quick_picks_title") {

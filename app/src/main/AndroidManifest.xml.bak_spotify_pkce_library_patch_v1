@@ -151,23 +151,6 @@
                 android:resource="@xml/shortcuts" />
         </activity>
 
-        <!-- Spotify OAuth PKCE redirect receiver. Redirect URI: echo-spotify-auth://callback -->
-        <activity
-            android:name=".spotify.SpotifyAuthRedirectActivity"
-            android:exported="true"
-            android:launchMode="singleTask"
-            android:theme="@style/Theme.Echo">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:scheme="echo-spotify-auth"
-                    android:host="callback" />
-            </intent-filter>
-        </activity>
-
-
         <!-- Dynamic (Material You themed) icon - enabled by default -->
         <activity-alias
             android:name=".MainActivityAlias"

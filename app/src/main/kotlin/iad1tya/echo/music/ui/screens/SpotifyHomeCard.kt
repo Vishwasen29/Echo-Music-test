@@ -1,0 +1,93 @@
+package iad1tya.echo.music.ui.screens
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.navigation.NavController
+import iad1tya.echo.music.R
+import iad1tya.echo.music.utils.SpotifyAuthStore
+
+@Composable
+fun SpotifyHomeCard(
+    navController: NavController,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    var isConnected by remember { mutableStateOf(false) }
+    var displayName by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        isConnected = SpotifyAuthStore.hasStoredToken(context)
+        displayName = SpotifyAuthStore.getStoredDisplayName(context)
+    }
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable { navController.navigate("spotify_import") },
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_spotify),
+                contentDescription = null,
+                tint = Color(0xFF1DB954),
+                modifier = Modifier.size(34.dp),
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (isConnected) "Spotify connected" else "Connect Spotify",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = if (isConnected) {
+                        displayName.ifBlank { "Open playlists, liked songs, and import" }
+                    } else {
+                        "Login to import playlists and liked songs"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = "Open",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}

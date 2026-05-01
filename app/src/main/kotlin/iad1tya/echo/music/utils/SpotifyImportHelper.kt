@@ -1,13 +1,9 @@
 package iad1tya.echo.music.utils
 
+import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
-import com.google.gson.JsonArray
-import com.google.gson.JsonElement
 import com.google.gson.JsonObject
-import java.net.URLDecoder
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,15 +13,16 @@ import org.jsoup.Jsoup
 
 object SpotifyImportHelper {
     private const val TAG = "SpotifyImportHelper"
-    private const val SPOTIFY_PAGE_LIMIT = 100
-    private const val MAX_TRACK_PAGES = 500
-    private const val PATCH_MARKER = "SPOTIFY_FULL_PLAYLIST_PAGINATION_PATCH_V2"
-
     private val gson = Gson()
-    private val client = OkHttpClient.Builder()
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
+    private val client = OkHttpClient()
+
+    data class SpotifyPlaylist(
+        val id: String,
+        val name: String,
+        val owner: String,
+        val totalTracks: Int,
+        val imageUrl: String?,
+    )
 
     data class ImportProgress(
         val playlistName: String,
@@ -35,131 +32,162 @@ object SpotifyImportHelper {
         val failedTracks: List<String>,
     )
 
+    /** Backward-compatible entry point for public playlist URLs. */
+    suspend fun getPlaylistSongs(url: String): Pair<String, List<Pair<String, String>>> =
+        getPlaylistSongs(context = null, url = url)
+
     /**
      * Extracts song titles and artists from a Spotify playlist URL.
-     *
-     * Spotify playlist tracks are returned in 100-track pages. The old importer
-     * could stop after the first page when it used Spotify embed/HTML data.
-     * This version prefers the Spotify Web API and keeps requesting offset
-     * pages until the playlist total is reached.
+     * If the user is logged in, it uses Spotify Web API OAuth and paginates every 100-track page.
+     * Otherwise, it falls back to anonymous public-token/embed/HTML methods.
      */
-    suspend fun getPlaylistSongs(url: String): Pair<String, List<Pair<String, String>>> = withContext(Dispatchers.IO) {
-        val songs = mutableListOf<Pair<String, String>>()
-        var playlistName = "Spotify Import"
-
-        try {
-            val playlistId = extractPlaylistId(url)
-            if (playlistId == null) {
-                Log.e(TAG, "Could not extract playlist ID from URL: $url")
-                return@withContext playlistName to emptyList()
-            }
-
-            // Strategy 1: Spotify Web API with anonymous web-player token.
-            // This is the only path here that can reliably fetch more than the
-            // 100 tracks exposed by Spotify's embed fallback.
-            val accessToken = getSpotifyAccessToken()
-            if (accessToken != null) {
-                try {
-                    val (name, apiSongs) = fetchTracksViaApi(playlistId, accessToken)
-                    if (name.isNotBlank()) playlistName = name
-                    if (apiSongs.isNotEmpty()) {
-                        Log.i(TAG, "API method fetched ${apiSongs.size} songs from playlist '$playlistName'")
-                        return@withContext playlistName to apiSongs
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "API method failed, falling back to embed", e)
-                }
-            } else {
-                Log.w(TAG, "Could not get Spotify access token; falling back to embed/HTML. Large playlists may be incomplete.")
-            }
-
-            // Strategy 2: Embed page parsing fallback. This is often capped.
-            try {
-                val embedUrl = "https://open.spotify.com/embed/playlist/$playlistId"
-                val doc = Jsoup.connect(embedUrl)
-                    .userAgent(desktopUserAgent())
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .timeout(20_000)
-                    .get()
-
-                val nextDataScript = doc.select("script#__NEXT_DATA__").first()
-                if (nextDataScript != null) {
-                    val json = nextDataScript.html()
-                    val jsonObject = gson.fromJson(json, JsonObject::class.java)
-                    val entity = jsonObject.obj("props")
-                        ?.obj("pageProps")
-                        ?.obj("state")
-                        ?.obj("data")
-                        ?.obj("entity")
-
-                    if (entity != null) {
-                        playlistName = entity.string("name")
-                            ?: entity.string("title")
-                            ?: playlistName
-
-                        val trackList = entity.array("trackList")
-                        if (trackList != null) {
-                            for (element in trackList) {
-                                val trackObj = element.asObjectOrNull() ?: continue
-                                val title = trackObj.string("title") ?: continue
-                                val subtitle = trackObj.string("subtitle") ?: ""
-                                if (title.isNotBlank()) songs.add(title to subtitle)
-                            }
-                        }
-                    }
-                }
-                if (songs.isNotEmpty()) {
-                    Log.i(TAG, "Embed method fetched ${songs.size} songs. This may be a capped fallback result.")
-                    return@withContext playlistName to songs.toList()
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Embed method failed, falling back to HTML", e)
-            }
-
-            // Strategy 3: HTML scraping fallback. Also often capped.
-            try {
-                val doc = Jsoup.connect("https://open.spotify.com/playlist/$playlistId")
-                    .userAgent(desktopUserAgent())
-                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                    .timeout(20_000)
-                    .get()
-
-                val titleEl = doc.selectFirst("meta[property=og:title]")
-                if (titleEl != null) {
-                    playlistName = titleEl.attr("content")
-                }
-
-                val trackElements = doc.select("meta[name=music:song]")
-                for (el in trackElements) {
-                    val trackUrl = el.attr("content")
-                    val trackDoc = try {
-                        Jsoup.connect(trackUrl)
-                            .userAgent(desktopUserAgent())
-                            .timeout(15_000)
-                            .get()
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val trackTitle = trackDoc?.selectFirst("meta[property=og:title]")?.attr("content")
-                    val trackArtist = trackDoc?.selectFirst("meta[property=og:description]")?.attr("content")
-                    if (!trackTitle.isNullOrBlank()) {
-                        songs.add(trackTitle to (trackArtist ?: ""))
-                    }
-                }
-                Log.i(TAG, "HTML method fetched ${songs.size} songs. This may be a capped fallback result.")
-            } catch (e: Exception) {
-                Log.e(TAG, "All methods failed", e)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error extracting playlist: ${e.message}", e)
+    suspend fun getPlaylistSongs(context: Context?, url: String): Pair<String, List<Pair<String, String>>> = withContext(Dispatchers.IO) {
+        val playlistId = extractPlaylistId(url)
+        if (playlistId == null) {
+            Log.e(TAG, "Could not extract playlist ID from URL: $url")
+            return@withContext "Spotify Import" to emptyList()
         }
-
-        playlistName to songs.toList()
+        fetchPlaylistTracks(context, playlistId)
     }
 
-    /**
-     * Search YouTube for a song by title and artist, returning the best match video ID.
-     */
+    suspend fun getUserPlaylists(context: Context): List<SpotifyPlaylist> = withContext(Dispatchers.IO) {
+        val token = SpotifyAuthStore.getValidAccessToken(context) ?: return@withContext emptyList()
+        val playlists = mutableListOf<SpotifyPlaylist>()
+        var nextUrl: String? = "https://api.spotify.com/v1/me/playlists?limit=50&offset=0"
+        var guard = 0
+
+        while (!nextUrl.isNullOrBlank() && guard++ < 400) {
+            val json = fetchSpotifyApiPage(nextUrl, token) ?: break
+            json.getAsJsonArray("items")?.forEach { element ->
+                val item = element.asJsonObject
+                val id = item.optString("id") ?: return@forEach
+                val name = item.optString("name") ?: "Spotify Playlist"
+                val owner = item.getAsJsonObject("owner")?.optString("display_name") ?: "Spotify"
+                val total = item.getAsJsonObject("tracks")?.optInt("total", 0) ?: 0
+                val image = item.getAsJsonArray("images")?.firstOrNull()?.asJsonObject?.optString("url")
+                playlists.add(SpotifyPlaylist(id, name, owner, total, image))
+            }
+            nextUrl = json.optString("next")
+        }
+
+        playlists.distinctBy { it.id }
+    }
+
+    suspend fun fetchLikedSongs(context: Context): Pair<String, List<Pair<String, String>>> = withContext(Dispatchers.IO) {
+        val token = SpotifyAuthStore.getValidAccessToken(context) ?: return@withContext "Spotify Liked Songs" to emptyList()
+        val songs = mutableListOf<Pair<String, String>>()
+        var nextUrl: String? =
+            "https://api.spotify.com/v1/me/tracks?limit=50&offset=0&fields=items(track(name,artists(name),id)),next,total"
+        var guard = 0
+
+        while (!nextUrl.isNullOrBlank() && guard++ < 400) {
+            val json = fetchSpotifyApiPage(nextUrl, token) ?: break
+            json.getAsJsonArray("items")?.forEach { element ->
+                parseTrackPair(element.asJsonObject.getAsJsonObject("track"))?.let { songs.add(it) }
+            }
+            nextUrl = json.optString("next")
+        }
+
+        "Spotify Liked Songs" to songs.distinct()
+    }
+
+    suspend fun fetchPlaylistTracks(context: Context?, playlistId: String): Pair<String, List<Pair<String, String>>> = withContext(Dispatchers.IO) {
+        var playlistName = "Spotify Import"
+
+        // Strategy 1: real OAuth token from user login.
+        val userToken = context?.let { SpotifyAuthStore.getValidAccessToken(it) }
+        if (!userToken.isNullOrBlank()) {
+            try {
+                val result = fetchTracksViaApi(playlistId, userToken)
+                if (result.second.isNotEmpty()) return@withContext result
+            } catch (e: Exception) {
+                Log.w(TAG, "OAuth Spotify API method failed, trying public fallbacks", e)
+            }
+        }
+
+        // Strategy 2: anonymous web-player token for public playlists.
+        val anonymousToken = getSpotifyAccessToken()
+        if (!anonymousToken.isNullOrBlank()) {
+            try {
+                val result = fetchTracksViaApi(playlistId, anonymousToken)
+                if (result.first.isNotBlank()) playlistName = result.first
+                if (result.second.isNotEmpty()) {
+                    Log.i(TAG, "Anonymous API method fetched ${result.second.size} songs")
+                    return@withContext playlistName to result.second
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Anonymous API method failed, falling back to embed", e)
+            }
+        }
+
+        // Strategy 3: embed page parsing. This may still be capped by Spotify, but it is a fallback only.
+        val embedSongs = mutableListOf<Pair<String, String>>()
+        try {
+            val embedUrl = "https://open.spotify.com/embed/playlist/$playlistId"
+            val doc = Jsoup.connect(embedUrl)
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .get()
+
+            val nextDataScript = doc.select("script#__NEXT_DATA__").first()
+            if (nextDataScript != null) {
+                val json = nextDataScript.html()
+                val jsonObject = gson.fromJson(json, JsonObject::class.java)
+                val entity = jsonObject.getAsJsonObject("props")
+                    ?.getAsJsonObject("pageProps")
+                    ?.getAsJsonObject("state")
+                    ?.getAsJsonObject("data")
+                    ?.getAsJsonObject("entity")
+
+                if (entity != null) {
+                    playlistName = entity.optString("name")
+                        ?: entity.optString("title")
+                        ?: playlistName
+
+                    entity.getAsJsonArray("trackList")?.forEach { element ->
+                        val trackObj = element.asJsonObject
+                        val title = trackObj.optString("title") ?: return@forEach
+                        val subtitle = trackObj.optString("subtitle") ?: ""
+                        if (title.isNotBlank()) embedSongs.add(title to subtitle)
+                    }
+                }
+            }
+            if (embedSongs.isNotEmpty()) {
+                Log.i(TAG, "Embed method fetched ${embedSongs.size} songs")
+                return@withContext playlistName to embedSongs.distinct()
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Embed method failed, falling back to HTML", e)
+        }
+
+        // Strategy 4: HTML scraping fallback.
+        val htmlSongs = mutableListOf<Pair<String, String>>()
+        try {
+            val doc = Jsoup.connect("https://open.spotify.com/playlist/$playlistId")
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .get()
+
+            doc.selectFirst("meta[property=og:title]")?.let { playlistName = it.attr("content") }
+            val trackElements = doc.select("meta[name=music:song]")
+            for (el in trackElements) {
+                val trackUrl = el.attr("content")
+                val trackDoc = try {
+                    Jsoup.connect(trackUrl).userAgent("Mozilla/5.0").get()
+                } catch (_: Exception) {
+                    null
+                }
+                val trackTitle = trackDoc?.selectFirst("meta[property=og:title]")?.attr("content")
+                val trackArtist = trackDoc?.selectFirst("meta[property=og:description]")?.attr("content")
+                if (!trackTitle.isNullOrBlank()) htmlSongs.add(trackTitle to (trackArtist ?: ""))
+            }
+            Log.i(TAG, "HTML method fetched ${htmlSongs.size} songs")
+        } catch (e: Exception) {
+            Log.e(TAG, "All Spotify playlist fetch methods failed", e)
+        }
+
+        playlistName to htmlSongs.distinct()
+    }
+
+    /** Search YouTube Music for a song by title and artist, returning the best match video ID. */
     suspend fun searchYouTubeForSong(title: String, artist: String): String? = withContext(Dispatchers.IO) {
         try {
             val query = "$title $artist"
@@ -173,190 +201,101 @@ object SpotifyImportHelper {
         }
     }
 
-    private fun extractPlaylistId(url: String): String? {
-        val decoded = try {
-            URLDecoder.decode(url.trim(), StandardCharsets.UTF_8.toString())
-        } catch (_: Exception) {
-            url.trim()
-        }
-
+    fun extractPlaylistId(url: String): String? {
         val patterns = listOf(
-            Regex("spotify:playlist:([a-zA-Z0-9]+)"),
             Regex("playlist/([a-zA-Z0-9]+)"),
             Regex("playlist%2F([a-zA-Z0-9]+)"),
+            Regex("spotify:playlist:([a-zA-Z0-9]+)"),
         )
         for (pattern in patterns) {
-            val match = pattern.find(decoded)
-            if (match != null) return match.groupValues[1]
+            pattern.find(url)?.let { return it.groupValues[1] }
         }
         return null
     }
 
     private fun getSpotifyAccessToken(): String? {
-        val request = Request.Builder()
-            .url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
-            .header("User-Agent", desktopUserAgent())
-            .header("Accept", "application/json")
-            .header("App-Platform", "WebPlayer")
-            .build()
-
-        val response = try {
-            client.newCall(request).execute()
+        return try {
+            val request = Request.Builder()
+                .url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                .build()
+            client.newCall(request).execute().use { response ->
+                val body = response.body?.string() ?: return null
+                val json = gson.fromJson(body, JsonObject::class.java)
+                json.optString("accessToken")
+            }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get Spotify access token: ${e.message}")
-            return null
-        }
-
-        response.use {
-            if (!it.isSuccessful) {
-                Log.w(TAG, "Failed to get Spotify access token: HTTP ${it.code}")
-                return null
-            }
-            val body = it.body?.string() ?: return null
-            val json = gson.fromJson(body, JsonObject::class.java)
-            return json.string("accessToken") ?: json.string("access_token")
+            Log.e(TAG, "Failed to get Spotify anonymous access token: ${e.message}")
+            null
         }
     }
 
-    private fun fetchTracksViaApi(
-        playlistId: String,
-        accessToken: String,
-    ): Pair<String, List<Pair<String, String>>> {
+    private fun fetchTracksViaApi(playlistId: String, accessToken: String): Pair<String, List<Pair<String, String>>> {
         val songs = mutableListOf<Pair<String, String>>()
-        val playlistName = fetchPlaylistNameViaApi(playlistId, accessToken)
+        var playlistName = "Spotify Import"
 
-        var offset = 0
-        var pageIndex = 0
-        var totalFromApi: Int? = null
-        val seenOffsets = mutableSetOf<Int>()
-
-        while (pageIndex < MAX_TRACK_PAGES) {
-            if (!seenOffsets.add(offset)) {
-                Log.w(TAG, "Stopping Spotify pagination because offset $offset repeated")
-                break
+        try {
+            val nameRequest = Request.Builder()
+                .url("https://api.spotify.com/v1/playlists/$playlistId?fields=name")
+                .header("Authorization", "Bearer $accessToken")
+                .build()
+            client.newCall(nameRequest).execute().use { response ->
+                val nameBody = response.body?.string()
+                if (response.isSuccessful && nameBody != null) {
+                    playlistName = gson.fromJson(nameBody, JsonObject::class.java).optString("name") ?: playlistName
+                }
             }
-
-            val pageUrl = buildTracksPageUrl(playlistId, offset)
-            val json = fetchSpotifyApiPage(pageUrl, accessToken) ?: break
-            val pageTotal = json.int("total")
-            if (pageTotal != null) totalFromApi = pageTotal
-
-            val items = json.array("items") ?: break
-            if (items.size() == 0) {
-                Log.i(TAG, "Spotify page ${pageIndex + 1} was empty at offset $offset")
-                break
-            }
-
-            var addedOnThisPage = 0
-            for (itemElement in items) {
-                val item = itemElement.asObjectOrNull() ?: continue
-                val trackElement = item.get("track") ?: continue
-                if (trackElement.isJsonNull) continue
-
-                val track = trackElement.asObjectOrNull() ?: continue
-                val trackType = track.string("type")
-                if (trackType != null && trackType != "track") continue
-
-                val name = track.string("name") ?: continue
-                if (name.isBlank()) continue
-
-                val artists = track.array("artists")
-                    ?.mapNotNull { artistElement ->
-                        artistElement.asObjectOrNull()?.string("name")?.takeIf(String::isNotBlank)
-                    }
-                    ?.joinToString(", ")
-                    ?: ""
-
-                songs.add(name to artists)
-                addedOnThisPage++
-            }
-
-            Log.i(
-                TAG,
-                "Fetched Spotify page ${pageIndex + 1}: offset=$offset, items=${items.size()}, added=$addedOnThisPage, collected=${songs.size}, total=${totalFromApi ?: -1}"
-            )
-
-            pageIndex++
-            val nextOffset = json.string("next")?.let(::extractOffsetFromUrl)
-            val nextOffsetToUse = nextOffset ?: (offset + SPOTIFY_PAGE_LIMIT)
-            val total = totalFromApi
-
-            if (total != null && nextOffsetToUse >= total) break
-            if (items.size() < SPOTIFY_PAGE_LIMIT && nextOffset == null) break
-
-            offset = nextOffsetToUse
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not fetch Spotify playlist name", e)
         }
 
-        val total = totalFromApi
-        if (total != null && songs.size < total) {
-            Log.w(TAG, "Spotify API pagination returned ${songs.size}/$total tracks. Playlist may be private, unavailable, or rate-limited.")
+        var nextUrl: String? =
+            "https://api.spotify.com/v1/playlists/$playlistId/tracks?offset=0&limit=100&fields=items(track(name,artists(name),id)),total,next"
+        var guard = 0
+
+        while (!nextUrl.isNullOrBlank() && guard++ < 400) {
+            val json = fetchSpotifyApiPage(nextUrl, accessToken) ?: break
+            json.getAsJsonArray("items")?.forEach { item ->
+                parseTrackPair(item.asJsonObject.getAsJsonObject("track"))?.let { songs.add(it) }
+            }
+            nextUrl = json.optString("next")
         }
 
-        return playlistName to songs
+        return playlistName to songs.distinct()
     }
 
-    private fun buildTracksPageUrl(playlistId: String, offset: Int): String {
-        val fields = "items(track(name,type,artists(name))),total,next"
-        val encodedFields = URLEncoder.encode(fields, StandardCharsets.UTF_8.toString())
-        return "https://api.spotify.com/v1/playlists/$playlistId/tracks" +
-            "?offset=$offset&limit=$SPOTIFY_PAGE_LIMIT&market=from_token&fields=$encodedFields"
+    private fun parseTrackPair(track: JsonObject?): Pair<String, String>? {
+        if (track == null || track.isJsonNull) return null
+        val name = track.optString("name") ?: return null
+        val artists = track.getAsJsonArray("artists")
+            ?.mapNotNull { it.asJsonObject.optString("name") }
+            ?.filter { it.isNotBlank() }
+            ?.joinToString(", ")
+            ?: ""
+        return if (name.isBlank()) null else name to artists
     }
 
-    private fun fetchPlaylistNameViaApi(
-        playlistId: String,
-        accessToken: String,
-    ): String {
-        val request = Request.Builder()
-            .url("https://api.spotify.com/v1/playlists/$playlistId?fields=name")
-            .header("Authorization", "Bearer $accessToken")
-            .header("User-Agent", desktopUserAgent())
-            .header("Accept", "application/json")
-            .build()
-
-        val response = try {
-            client.newCall(request).execute()
-        } catch (_: Exception) {
-            return ""
-        }
-
-        response.use {
-            if (!it.isSuccessful) return ""
-            val body = it.body?.string() ?: return ""
-            return gson.fromJson(body, JsonObject::class.java).string("name") ?: ""
-        }
-    }
-
-    private fun fetchSpotifyApiPage(
-        url: String,
-        accessToken: String,
-    ): JsonObject? {
+    private fun fetchSpotifyApiPage(url: String, accessToken: String): JsonObject? {
         var attempts = 0
         while (attempts < 4) {
             attempts++
             val request = Request.Builder()
                 .url(url)
                 .header("Authorization", "Bearer $accessToken")
-                .header("User-Agent", desktopUserAgent())
-                .header("Accept", "application/json")
                 .build()
 
-            val response = try {
-                client.newCall(request).execute()
-            } catch (e: Exception) {
-                Log.w(TAG, "Spotify API page fetch failed before response: ${e.message}")
-                return null
-            }
-
+            val response = client.newCall(request).execute()
             try {
                 if (response.code == 429) {
                     val retryAfterSeconds = response.header("Retry-After")?.toLongOrNull() ?: 1L
                     Log.w(TAG, "Spotify rate-limited page fetch, retrying in ${retryAfterSeconds}s (attempt $attempts)")
-                    TimeUnit.SECONDS.sleep(retryAfterSeconds.coerceAtLeast(1L).coerceAtMost(10L))
+                    TimeUnit.SECONDS.sleep(retryAfterSeconds.coerceAtLeast(1L))
                     continue
                 }
 
                 if (!response.isSuccessful) {
-                    Log.w(TAG, "Spotify API page fetch failed: HTTP ${response.code}")
+                    val body = response.body?.string().orEmpty()
+                    Log.w(TAG, "Spotify API page fetch failed: HTTP ${response.code} ${body.take(160)}")
                     return null
                 }
 
@@ -366,31 +305,12 @@ object SpotifyImportHelper {
                 response.close()
             }
         }
-
         return null
     }
 
-    private fun extractOffsetFromUrl(url: String): Int? {
-        val match = Regex("[?&]offset=([0-9]+)").find(url)
-        return match?.groupValues?.getOrNull(1)?.toIntOrNull()
-    }
+    private fun JsonObject.optString(key: String): String? =
+        get(key)?.takeUnless { it.isJsonNull }?.asString
 
-    private fun desktopUserAgent(): String =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
-    private fun JsonObject.string(name: String): String? =
-        get(name)?.takeIf { !it.isJsonNull }?.asString
-
-    private fun JsonObject.int(name: String): Int? =
-        get(name)?.takeIf { !it.isJsonNull }?.asInt
-
-    private fun JsonObject.obj(name: String): JsonObject? =
-        get(name)?.takeIf { !it.isJsonNull && it.isJsonObject }?.asJsonObject
-
-    private fun JsonObject.array(name: String): JsonArray? =
-        get(name)?.takeIf { !it.isJsonNull && it.isJsonArray }?.asJsonArray
-
-    private fun JsonElement.asObjectOrNull(): JsonObject? =
-        takeIf { !it.isJsonNull && it.isJsonObject }?.asJsonObject
+    private fun JsonObject.optInt(key: String, default: Int): Int =
+        get(key)?.takeUnless { it.isJsonNull }?.asInt ?: default
 }

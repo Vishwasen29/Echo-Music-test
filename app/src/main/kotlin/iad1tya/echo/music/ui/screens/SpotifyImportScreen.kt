@@ -1,17 +1,52 @@
 package iad1tya.echo.music.ui.screens
 
+import android.content.ActivityNotFoundException
 import android.widget.Toast
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.Font
@@ -21,13 +56,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import iad1tya.echo.music.LocalDatabase
-import iad1tya.echo.music.LocalPlayerConnection
 import iad1tya.echo.music.R
 import iad1tya.echo.music.db.entities.PlaylistEntity
 import iad1tya.echo.music.db.entities.PlaylistSongMap
 import iad1tya.echo.music.models.toMediaMetadata
 import iad1tya.echo.music.ui.component.IconButton
 import iad1tya.echo.music.ui.utils.backToMain
+import iad1tya.echo.music.utils.SpotifyAuthStore
 import iad1tya.echo.music.utils.SpotifyImportHelper
 import java.time.LocalDateTime
 import kotlinx.coroutines.Dispatchers
@@ -41,421 +76,549 @@ fun SpotifyImportScreen(
 ) {
     val context = LocalContext.current
     val database = LocalDatabase.current
-    val playerConnection = LocalPlayerConnection.current
     val scope = rememberCoroutineScope()
 
-    var spotifyUrl by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("") }
+    var clientId by rememberSaveable { mutableStateOf("") }
+    var spotifyUrl by rememberSaveable { mutableStateOf("") }
+    var profile by remember { mutableStateOf<SpotifyAuthStore.SpotifyProfile?>(null) }
+    var playlists by remember { mutableStateOf<List<SpotifyImportHelper.SpotifyPlaylist>>(emptyList()) }
     var importedSongs by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var playlistName by remember { mutableStateOf("") }
+    var statusText by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var isImporting by remember { mutableStateOf(false) }
     var importProgress by remember { mutableIntStateOf(0) }
     var totalTracks by remember { mutableIntStateOf(0) }
-    var isImporting by remember { mutableStateOf(false) }
-    var showGuide by rememberSaveable { mutableStateOf(false) }
+    var showSetup by rememberSaveable { mutableStateOf(false) }
+
+    suspend fun refreshSpotifyState(loadPlaylists: Boolean = false) {
+        profile = SpotifyAuthStore.fetchCurrentUser(context)
+        if (loadPlaylists) {
+            playlists = SpotifyImportHelper.getUserPlaylists(context)
+        }
+    }
+
+    fun setFetchedTracks(name: String, songs: List<Pair<String, String>>) {
+        playlistName = name.ifBlank { "Spotify Import" }
+        importedSongs = songs
+        totalTracks = songs.size
+        statusText = if (songs.isEmpty()) {
+            "No songs found. Login with Spotify for private playlists, or check the playlist URL."
+        } else {
+            "Found ${songs.size} tracks in \"$playlistName\""
+        }
+    }
+
+    fun importTracksToEcho(name: String, songs: List<Pair<String, String>>) {
+        if (songs.isEmpty()) {
+            Toast.makeText(context, "No Spotify tracks loaded", Toast.LENGTH_SHORT).show()
+            return
+        }
+        scope.launch {
+            isImporting = true
+            importProgress = 0
+            totalTracks = songs.size
+            statusText = "Importing to Echo Music..."
+            val foundIds = mutableListOf<String>()
+            val failed = mutableListOf<String>()
+
+            try {
+                for ((index, pair) in songs.withIndex()) {
+                    val (title, artist) = pair
+                    importProgress = index + 1
+                    statusText = "Matching: $title ($importProgress/${songs.size})"
+                    val videoId = SpotifyImportHelper.searchYouTubeForSong(title, artist)
+                    if (videoId != null) foundIds.add(videoId) else failed.add("$title - $artist")
+                }
+
+                if (foundIds.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        val songMetadataList = foundIds.mapNotNull { songId ->
+                            try {
+                                com.echo.innertube.YouTube.queue(listOf(songId))
+                                    .getOrNull()
+                                    ?.firstOrNull()
+                                    ?.let { ytSong -> songId to ytSong.toMediaMetadata() }
+                            } catch (_: Exception) {
+                                null
+                            }
+                        }
+
+                        database.query {
+                            val playlist = PlaylistEntity(
+                                name = name.ifBlank { "Spotify Import" },
+                                browseId = null,
+                                bookmarkedAt = LocalDateTime.now(),
+                                isEditable = true,
+                            )
+                            insert(playlist)
+                            songMetadataList.forEachIndexed { idx, (songId, metadata) ->
+                                insert(metadata)
+                                insert(
+                                    PlaylistSongMap(
+                                        songId = songId,
+                                        playlistId = playlist.id,
+                                        position = idx,
+                                    ),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                statusText = "Done. Imported ${foundIds.size}/${songs.size} tracks" +
+                    if (failed.isNotEmpty()) ". ${failed.size} tracks were not matched." else ""
+                Toast.makeText(
+                    context,
+                    "Playlist \"${name.ifBlank { "Spotify Import" }}\" created with ${foundIds.size} songs",
+                    Toast.LENGTH_LONG,
+                ).show()
+            } catch (e: Exception) {
+                statusText = "Import failed: ${e.message}"
+            } finally {
+                isImporting = false
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        clientId = SpotifyAuthStore.getClientId(context)
+        refreshSpotifyState(loadPlaylists = false)
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = "Spotify Import",
+                        text = "Spotify Library",
                         style = MaterialTheme.typography.titleLarge.copy(
                             fontFamily = FontFamily(Font(R.font.zalando_sans_expanded)),
-                            fontWeight = FontWeight.Bold
-                        )
+                            fontWeight = FontWeight.Bold,
+                        ),
                     )
                 },
                 navigationIcon = {
                     IconButton(
                         onClick = navController::navigateUp,
-                        onLongClick = navController::backToMain
+                        onLongClick = navController::backToMain,
                     ) {
                         Icon(
                             painterResource(R.drawable.arrow_back),
-                            contentDescription = null
+                            contentDescription = null,
                         )
                     }
-                }
+                },
             )
-        }
+        },
     ) { paddingValues ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // URL input
-            OutlinedTextField(
-                value = spotifyUrl,
-                onValueChange = { spotifyUrl = it },
-                label = { Text("Spotify Playlist URL") },
-                placeholder = { Text("https://open.spotify.com/playlist/...") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            // Fetch button
-            Button(
-                onClick = {
-                    if (spotifyUrl.isBlank()) {
-                        Toast.makeText(context, "Please enter a Spotify playlist URL", Toast.LENGTH_SHORT).show()
-                        return@Button
-                    }
-                    scope.launch {
-                        isLoading = true
-                        statusText = "Fetching playlist..."
-                        try {
-                            val (name, songs) = SpotifyImportHelper.getPlaylistSongs(spotifyUrl)
-                            playlistName = name
-                            importedSongs = songs
-                            totalTracks = songs.size
-                            statusText = if (songs.isEmpty()) {
-                                "No songs found. Check the URL and try again."
-                            } else {
-                                "Found $totalTracks tracks in \"$name\""
-                            }
-                        } catch (e: Exception) {
-                            statusText = "Error: ${e.message}"
-                        } finally {
-                            isLoading = false
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isLoading && !isImporting,
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                    Spacer(Modifier.width(8.dp))
-                }
-                Text("Fetch Playlist")
-            }
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Import help",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = "If fetch fails, the playlist may be private or Spotify may be rate-limiting access",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        FilledTonalButton(onClick = { showGuide = !showGuide }) {
-                            Text(if (showGuide) "Hide" else "Show")
-                        }
-                    }
-
-                    if (showGuide) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 340.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
-
-                            Text(
-                                text = "Supports full public Spotify playlists. Echo fetches tracks in 100-track Spotify pages until the playlist is complete.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.error,
-                            )
-
-                            GuideSection(
-                                title = "Supported transfer services",
-                                items = spotifyTransferServices,
-                            )
-
-                            GuideSection(
-                                title = "Supported source platforms",
-                                items = spotifySourcePlatforms,
-                            )
-
-                            Text(
-                                text = "Destination must be YouTube Music for Echo Music compatibility.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-
-                            GuideSection(
-                                title = "Step-by-step",
-                                items = spotifyStepByStep,
-                                numbered = true,
-                            )
-
-                            GuideSection(
-                                title = "Important notes",
-                                items = spotifyImportantNotes,
-                            )
-
-                            Text(
-                                text = "Done! Your playlists from Spotify, Apple Music, and other platforms are now available in Echo Music.",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Import button
-            if (importedSongs.isNotEmpty()) {
-                Button(
-                    onClick = {
+            item {
+                SpotifyLoginCard(
+                    clientId = clientId,
+                    onClientIdChange = { clientId = it.trim() },
+                    profile = profile,
+                    isBusy = isLoading || isImporting,
+                    showSetup = showSetup,
+                    onToggleSetup = { showSetup = !showSetup },
+                    onSaveClientId = {
                         scope.launch {
-                            isImporting = true
-                            importProgress = 0
-                            statusText = "Importing to Echo Music..."
-
-                            val foundIds = mutableListOf<String>()
-                            val failed = mutableListOf<String>()
-
-                            for ((index, pair) in importedSongs.withIndex()) {
-                                val (title, artist) = pair
-                                importProgress = index + 1
-                                statusText = "Searching: $title ($importProgress/$totalTracks)"
-
-                                val videoId = SpotifyImportHelper.searchYouTubeForSong(title, artist)
-                                if (videoId != null) {
-                                    foundIds.add(videoId)
-                                } else {
-                                    failed.add("$title - $artist")
-                                }
-                            }
-
-                            // Create playlist with found songs
-                            if (foundIds.isNotEmpty()) {
-                                withContext(Dispatchers.IO) {
-                                    // First fetch all song metadata from YouTube
-                                    val songMetadataList = foundIds.mapNotNull { songId ->
-                                        try {
-                                            com.echo.innertube.YouTube.queue(listOf(songId))
-                                                .getOrNull()?.firstOrNull()?.let { ytSong ->
-                                                    songId to ytSong.toMediaMetadata()
-                                                }
-                                        } catch (_: Exception) { null }
-                                    }
-                                    
-                                    // Then insert into database in a single transaction
-                                    database.query {
-                                        val playlist = PlaylistEntity(
-                                            name = playlistName,
-                                            browseId = null,
-                                            bookmarkedAt = LocalDateTime.now(),
-                                            isEditable = true,
-                                        )
-                                        insert(playlist)
-                                        songMetadataList.forEachIndexed { idx, (songId, metadata) ->
-                                            insert(metadata)
-                                            insert(
-                                                PlaylistSongMap(
-                                                    songId = songId,
-                                                    playlistId = playlist.id,
-                                                    position = idx
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            statusText = "Done! Imported ${foundIds.size}/$totalTracks songs" +
-                                    if (failed.isNotEmpty()) ". ${failed.size} tracks not found." else ""
-                            isImporting = false
-
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    context,
-                                    "Playlist \"$playlistName\" created with ${foundIds.size} songs",
-                                    Toast.LENGTH_LONG
-                                ).show()
+                            SpotifyAuthStore.setClientId(context, clientId)
+                            Toast.makeText(context, "Spotify Client ID saved", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onLogin = {
+                        scope.launch {
+                            try {
+                                SpotifyAuthStore.setClientId(context, clientId)
+                                val intent = SpotifyAuthStore.createLoginIntent(context, clientId)
+                                context.startActivity(intent)
+                            } catch (e: ActivityNotFoundException) {
+                                Toast.makeText(context, "No browser found for Spotify login", Toast.LENGTH_LONG).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, e.message ?: "Spotify login failed", Toast.LENGTH_LONG).show()
                             }
                         }
                     },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isImporting && !isLoading,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
-                    )
-                ) {
-                    if (isImporting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onTertiary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text("Import to Echo Music")
-                }
+                    onSignOut = {
+                        scope.launch {
+                            SpotifyAuthStore.clearAuth(context)
+                            profile = null
+                            playlists = emptyList()
+                            statusText = "Signed out of Spotify."
+                        }
+                    },
+                )
+            }
 
-                // Progress
-                if (isImporting) {
-                    LinearProgressIndicator(
-                        progress = { importProgress.toFloat() / totalTracks.toFloat() },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                isLoading = true
+                                statusText = "Loading your Spotify playlists..."
+                                try {
+                                    refreshSpotifyState(loadPlaylists = true)
+                                    statusText = if (playlists.isEmpty()) {
+                                        "No playlists loaded. Make sure Spotify login completed and scopes were granted."
+                                    } else {
+                                        "Loaded ${playlists.size} Spotify playlists."
+                                    }
+                                } catch (e: Exception) {
+                                    statusText = "Spotify library failed: ${e.message}"
+                                } finally {
+                                    isLoading = false
+                                }
+                            }
+                        },
+                        enabled = !isLoading && !isImporting,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("Load Library")
+                    }
+
+                    FilledTonalButton(
+                        onClick = {
+                            scope.launch {
+                                isLoading = true
+                                statusText = "Loading Spotify liked songs..."
+                                try {
+                                    val (name, songs) = SpotifyImportHelper.fetchLikedSongs(context)
+                                    setFetchedTracks(name, songs)
+                                } catch (e: Exception) {
+                                    statusText = "Liked songs failed: ${e.message}"
+                                } finally {
+                                    isLoading = false
+                                }
+                            }
+                        },
+                        enabled = !isLoading && !isImporting,
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Text("Liked Songs")
+                    }
                 }
             }
 
-            // Status
-            if (statusText.isNotEmpty()) {
+            item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                    )
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
                 ) {
-                    Text(
-                        text = statusText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("Import playlist by URL", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        OutlinedTextField(
+                            value = spotifyUrl,
+                            onValueChange = { spotifyUrl = it },
+                            label = { Text("Spotify Playlist URL") },
+                            placeholder = { Text("https://open.spotify.com/playlist/...") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        Button(
+                            onClick = {
+                                if (spotifyUrl.isBlank()) {
+                                    Toast.makeText(context, "Enter a Spotify playlist URL", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                scope.launch {
+                                    isLoading = true
+                                    statusText = "Fetching playlist..."
+                                    try {
+                                        val (name, songs) = SpotifyImportHelper.getPlaylistSongs(context, spotifyUrl)
+                                        setFetchedTracks(name, songs)
+                                    } catch (e: Exception) {
+                                        statusText = "Playlist fetch failed: ${e.message}"
+                                    } finally {
+                                        isLoading = false
+                                    }
+                                }
+                            },
+                            enabled = !isLoading && !isImporting,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Text("Fetch Playlist")
+                        }
+                    }
                 }
             }
 
-            // Song list preview
-            if (importedSongs.isNotEmpty()) {
-                Text(
-                    text = "Tracks ($totalTracks)",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 160.dp, max = 360.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    itemsIndexed(importedSongs) { index, (title, artist) ->
-                        ListItem(
-                            headlineContent = {
+            if (playlists.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "Your Spotify playlists (${playlists.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                items(playlists, key = { it.id }) { playlist ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    scope.launch {
+                                        isLoading = true
+                                        statusText = "Loading ${playlist.name}..."
+                                        try {
+                                            val (name, songs) = SpotifyImportHelper.fetchPlaylistTracks(context, playlist.id)
+                                            setFetchedTracks(name.ifBlank { playlist.name }, songs)
+                                        } catch (e: Exception) {
+                                            statusText = "Playlist load failed: ${e.message}"
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                }
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_spotify),
+                                contentDescription = null,
+                                modifier = Modifier.size(26.dp),
+                                tint = Color(0xFF1DB954),
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            supportingContent = {
-                                Text(
-                                    text = artist,
+                                    text = playlist.name,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.SemiBold,
                                 )
-                            },
-                            leadingContent = {
                                 Text(
-                                    text = "${index + 1}",
+                                    text = "${playlist.totalTracks} tracks • ${playlist.owner}",
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
+                            TextButton(
+                                onClick = {
+                                    scope.launch {
+                                        isLoading = true
+                                        statusText = "Importing ${playlist.name}..."
+                                        try {
+                                            val (name, songs) = SpotifyImportHelper.fetchPlaylistTracks(context, playlist.id)
+                                            setFetchedTracks(name.ifBlank { playlist.name }, songs)
+                                            importTracksToEcho(name.ifBlank { playlist.name }, songs)
+                                        } catch (e: Exception) {
+                                            statusText = "Playlist import failed: ${e.message}"
+                                        } finally {
+                                            isLoading = false
+                                        }
+                                    }
+                                },
+                                enabled = !isLoading && !isImporting,
+                            ) {
+                                Text("Import")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (importedSongs.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(playlistName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text("${importedSongs.size} Spotify tracks loaded", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Button(
+                                    onClick = { importTracksToEcho(playlistName, importedSongs) },
+                                    enabled = !isLoading && !isImporting,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954), contentColor = Color.White),
+                                ) {
+                                    Text("Import")
+                                }
+                            }
+                            if (isImporting) {
+                                LinearProgressIndicator(
+                                    progress = { if (totalTracks > 0) importProgress.toFloat() / totalTracks.toFloat() else 0f },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 360.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                itemsIndexed(importedSongs) { index, (title, artist) ->
+                                    ListItem(
+                                        headlineContent = {
+                                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        },
+                                        supportingContent = {
+                                            Text(artist, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        },
+                                        leadingContent = {
+                                            Text("${index + 1}", style = MaterialTheme.typography.bodySmall)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (statusText.isNotEmpty()) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                    ) {
+                        Text(
+                            text = statusText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(14.dp),
                         )
                     }
                 }
             }
+
+            item { Spacer(Modifier.height(24.dp)) }
         }
     }
 }
 
 @Composable
-private fun GuideSection(
-    title: String,
-    items: List<String>,
-    numbered: Boolean = false,
+private fun SpotifyLoginCard(
+    clientId: String,
+    onClientIdChange: (String) -> Unit,
+    profile: SpotifyAuthStore.SpotifyProfile?,
+    isBusy: Boolean,
+    showSetup: Boolean,
+    onToggleSetup: () -> Unit,
+    onSaveClientId: () -> Unit,
+    onLogin: () -> Unit,
+    onSignOut: () -> Unit,
 ) {
     Card(
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-        ),
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Column(
-            modifier = Modifier.padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-            )
-            items.forEachIndexed { index, item ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_spotify),
+                    contentDescription = null,
+                    tint = Color(0xFF1DB954),
+                    modifier = Modifier.size(34.dp),
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Spotify", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = profile?.let { "Connected as ${it.displayName}" } ?: "Connect to load playlists and liked songs",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onLogin,
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954), contentColor = Color.White),
+                ) {
+                    Text(if (profile == null) "Login with Spotify" else "Reconnect")
+                }
+                FilledTonalButton(
+                    onClick = onToggleSetup,
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(if (showSetup) "Hide setup" else "Setup")
+                }
+                if (profile != null) {
+                    TextButton(onClick = onSignOut, enabled = !isBusy) { Text("Sign out") }
+                }
+            }
+
+            if (showSetup) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
                 Text(
-                    text = if (numbered) "${index + 1}. $item" else "• $item",
+                    text = "Create a Spotify Developer app, add redirect URI ${SpotifyAuthStore.REDIRECT_URI}, then paste the Client ID here. No client secret is needed for PKCE.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                OutlinedTextField(
+                    value = clientId,
+                    onValueChange = onClientIdChange,
+                    label = { Text("Spotify Client ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                )
+                FilledTonalButton(
+                    onClick = onSaveClientId,
+                    enabled = !isBusy,
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text("Save Client ID")
+                }
             }
         }
     }
 }
-
-private val spotifyTransferServices = listOf(
-    "TuneMyMusic - https://www.tunemymusic.com/",
-    "Soundiiz - https://soundiiz.com/",
-    "FreeYourMusic - https://freeyourmusic.com/",
-    "MusConv - https://musconv.com/",
-)
-
-private val spotifySourcePlatforms = listOf(
-    "Spotify",
-    "Apple Music",
-    "Amazon Music",
-    "Deezer",
-    "TIDAL",
-    "Pandora",
-    "SoundCloud",
-    "Napster",
-    "YouTube",
-    "YouTube Music",
-)
-
-private val spotifyStepByStep = listOf(
-    "Choose a transfer service and open it.",
-    "Sign in to your source platform and allow playlist access.",
-    "Choose YouTube Music as destination and sign in with Google.",
-    "Use the same YouTube Music account that you use in Echo Music.",
-    "Select playlists/albums and review before transfer.",
-    "Start transfer and wait for completion.",
-    "Open Echo Music and your transferred playlists should appear.",
-)
-
-private val spotifyImportantNotes = listOf(
-    "Free plans may have transfer limits.",
-    "Premium plans usually support larger and faster transfers.",
-    "Some songs may be skipped if unavailable on YouTube Music.",
-    "Playlist names and order are usually preserved.",
-)

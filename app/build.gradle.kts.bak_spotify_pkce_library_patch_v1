@@ -20,11 +20,6 @@ android {
         versionCode = 420
         versionName = "4.2.0"
 
-
-        val spotifyClientId = ((project.findProperty("SPOTIFY_CLIENT_ID") as String?) ?: System.getenv("SPOTIFY_CLIENT_ID") ?: "")
-            .replace("\\", "\\\\")
-            .replace("\"", "\\\"")
-        buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
