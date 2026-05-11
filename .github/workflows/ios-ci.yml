@@ -1,0 +1,64 @@
+name: iOS CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-build:
+    name: Build iOS Simulator App
+    runs-on: macos-15
+    timeout-minutes: 75
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcode-select -p
+
+      - name: Build iOS simulator app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ios/EchoIOS.xcodeproj \
+            -scheme EchoIOS \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/ios/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            clean build
+
+      - name: Package iOS simulator app
+        run: |
+          set -euo pipefail
+          APP_PATH="$(find build/ios/DerivedData -path '*Build/Products/Debug-iphonesimulator/*.app' -maxdepth 10 | head -n 1 || true)"
+          if [ -z "$APP_PATH" ]; then
+            echo "No iOS .app found."
+            find build/ios/DerivedData -maxdepth 8 -type d | sort || true
+            exit 1
+          fi
+          mkdir -p build/ios/artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/ios/artifacts/ios-simulator-app.zip
+
+      - name: Upload iOS simulator app
+        uses: actions/upload-artifact@v4
+        with:
+          name: echo-ios-simulator-app
+          path: build/ios/artifacts/ios-simulator-app.zip
+          if-no-files-found: error
+          retention-days: 14
