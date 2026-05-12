@@ -152,7 +152,7 @@
         </activity>
 
 
-        <!-- Spotify OAuth PKCE compatibility launcher. -->
+        <!-- Spotify browser/WebView login. No user-facing Client ID setup screen. -->
         <activity
             android:name=".spotify.SpotifyBrowserLoginActivity"
             android:exported="false"

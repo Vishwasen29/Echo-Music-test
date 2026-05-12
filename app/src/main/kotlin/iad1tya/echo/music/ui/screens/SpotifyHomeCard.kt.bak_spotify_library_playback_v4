@@ -67,15 +67,15 @@ fun SpotifyHomeCard(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isConnected) "Spotify Library" else "Connect Spotify",
+                    text = if (isConnected) "Spotify connected" else "Connect Spotify",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     text = if (isConnected) {
-                        displayName.ifBlank { "Open playlists, liked songs, search, and playback matching" }
+                        displayName.ifBlank { "Open playlists, liked songs, and import" }
                     } else {
-                        "OAuth PKCE login • playlists • liked songs • search"
+                        "Official OAuth PKCE • playlists • liked songs"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

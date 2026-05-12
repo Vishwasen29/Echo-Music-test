@@ -53,8 +53,7 @@ class SpotifyAuthRedirectActivity : Activity() {
             ).show()
             startActivity(
                 Intent(this@SpotifyAuthRedirectActivity, MainActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    .putExtra("echo_open_route", "spotify_import"),
+                    .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             )
             finish()
         }
