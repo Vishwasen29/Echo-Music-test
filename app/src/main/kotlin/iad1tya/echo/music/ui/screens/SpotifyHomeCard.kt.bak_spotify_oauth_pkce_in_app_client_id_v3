@@ -75,7 +75,7 @@ fun SpotifyHomeCard(
                     text = if (isConnected) {
                         displayName.ifBlank { "Open playlists, liked songs, and import" }
                     } else {
-                        "Official OAuth PKCE • playlists • liked songs"
+                        "Browser login • playlists • liked songs"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,

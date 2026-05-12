@@ -13,7 +13,8 @@ import org.jsoup.Jsoup
 
 object SpotifyImportHelper {
     private const val TAG = "SpotifyImportHelper"
-    private const val USER_AGENT = "EchoMusic/4.2 Android Spotify Import"
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36"
     private val gson = Gson()
     private val client = OkHttpClient()
 
@@ -23,6 +24,14 @@ object SpotifyImportHelper {
         val owner: String,
         val totalTracks: Int,
         val imageUrl: String?,
+    )
+
+    data class ImportProgress(
+        val playlistName: String,
+        val totalTracks: Int,
+        val processedTracks: Int,
+        val foundSongIds: List<String>,
+        val failedTracks: List<String>,
     )
 
     suspend fun getPlaylistSongs(url: String): Pair<String, List<Pair<String, String>>> =
@@ -56,15 +65,13 @@ object SpotifyImportHelper {
                 val item = element.asJsonObject
                 val id = item.optString("id") ?: return@forEach
                 val name = item.optString("name") ?: "Spotify Playlist"
-                val owner = item.getAsJsonObject("owner")?.optString("display_name")
-                    ?: item.getAsJsonObject("owner")?.optString("id")
-                    ?: "Spotify"
+                val owner = item.getAsJsonObject("owner")?.optString("display_name") ?: "Spotify"
                 val tracks = item.getAsJsonObject("tracks")
                 val totalTracks = tracks?.optInt("total", 0) ?: 0
                 val image = item.getAsJsonArray("images")?.firstOrNull()?.asJsonObject?.optString("url")
                 playlists.add(SpotifyPlaylist(id, name, owner, totalTracks, image))
             }
-            offset += items.size()
+            offset += items.size().coerceAtLeast(limit)
         }
 
         playlists.distinctBy { it.id }
@@ -87,7 +94,7 @@ object SpotifyImportHelper {
             items.forEach { element ->
                 parseTrackPair(element.asJsonObject.getAsJsonObject("track"))?.let { songs.add(it) }
             }
-            offset += items.size()
+            offset += items.size().coerceAtLeast(limit)
         }
 
         "Spotify Liked Songs" to songs
@@ -100,17 +107,26 @@ object SpotifyImportHelper {
                 val result = fetchTracksViaApi(playlistId, userToken)
                 if (result.second.isNotEmpty()) return@withContext result
             } catch (e: Exception) {
-                Log.w(TAG, "Spotify API playlist method failed; trying public embed fallback", e)
+                Log.w(TAG, "Spotify browser session API method failed, trying public fallback", e)
             }
         }
 
-        // Public fallback is intentionally limited. Private/collaborative/full library access needs OAuth.
+        val anonymousToken = getSpotifyAccessToken()
+        if (!anonymousToken.isNullOrBlank()) {
+            try {
+                val result = fetchTracksViaApi(playlistId, anonymousToken)
+                if (result.second.isNotEmpty()) return@withContext result
+            } catch (e: Exception) {
+                Log.w(TAG, "Anonymous API pagination failed, falling back to embed/HTML", e)
+            }
+        }
+
         fetchTracksFromEmbedOrHtml(playlistId)
     }
 
     suspend fun searchYouTubeForSong(title: String, artist: String): String? = withContext(Dispatchers.IO) {
         try {
-            val query = listOf(title, artist).filter { it.isNotBlank() }.joinToString(" ")
+            val query = "$title $artist"
             val result = com.echo.innertube.YouTube.search(query, com.echo.innertube.YouTube.SearchFilter.FILTER_SONG)
             val items = result.getOrNull()?.items ?: return@withContext null
             val songItem = items.filterIsInstance<com.echo.innertube.models.SongItem>().firstOrNull()
@@ -122,7 +138,6 @@ object SpotifyImportHelper {
     }
 
     fun extractPlaylistId(url: String): String? {
-        val cleaned = url.trim()
         val patterns = listOf(
             Regex("playlist/([a-zA-Z0-9]+)"),
             Regex("playlist%2F([a-zA-Z0-9]+)"),
@@ -130,9 +145,9 @@ object SpotifyImportHelper {
             Regex("[?&]list=([a-zA-Z0-9]+)"),
         )
         for (pattern in patterns) {
-            pattern.find(cleaned)?.let { return it.groupValues[1] }
+            pattern.find(url)?.let { return it.groupValues[1] }
         }
-        return cleaned.takeIf { it.matches(Regex("[a-zA-Z0-9]{20,40}")) }
+        return null
     }
 
     private fun fetchTracksViaApi(playlistId: String, accessToken: String): Pair<String, List<Pair<String, String>>> {
@@ -143,7 +158,6 @@ object SpotifyImportHelper {
             .url("https://api.spotify.com/v1/playlists/$playlistId?fields=name,tracks(total)")
             .header("Authorization", "Bearer $accessToken")
             .header("User-Agent", USER_AGENT)
-            .header("Accept", "application/json")
             .build()
         client.newCall(metaRequest).execute().use { response ->
             val body = response.body?.string().orEmpty()
@@ -175,6 +189,7 @@ object SpotifyImportHelper {
             }
 
             offset += items.size()
+            if (items.size() < limit && offset >= pageTotal) break
         }
 
         Log.i(TAG, "Fetched ${songs.size}/${if (expectedTotal == Int.MAX_VALUE) -1 else expectedTotal} Spotify tracks from playlist $playlistId")
@@ -207,7 +222,7 @@ object SpotifyImportHelper {
                 }
             }
             if (embedSongs.isNotEmpty()) {
-                Log.i(TAG, "Embed fallback fetched ${embedSongs.size} songs; OAuth is required for reliable full pagination")
+                Log.i(TAG, "Embed fallback fetched ${embedSongs.size} songs; this fallback can be capped by Spotify")
                 return playlistName to embedSongs
             }
         } catch (e: Exception) {
@@ -234,9 +249,28 @@ object SpotifyImportHelper {
             }
             Log.i(TAG, "HTML fallback fetched ${htmlSongs.size} songs")
         } catch (e: Exception) {
-            Log.e(TAG, "All Spotify public fallback methods failed", e)
+            Log.e(TAG, "All Spotify playlist fetch methods failed", e)
         }
         return playlistName to htmlSongs
+    }
+
+    private fun getSpotifyAccessToken(): String? {
+        return try {
+            val request = Request.Builder()
+                .url("https://open.spotify.com/get_access_token?reason=transport&productType=web_player")
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "application/json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body?.string() ?: return null
+                val json = gson.fromJson(body, JsonObject::class.java)
+                json.optString("accessToken") ?: json.optString("access_token")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get Spotify anonymous web token: ${e.message}")
+            null
+        }
     }
 
     private fun parseTrackPair(track: JsonObject?): Pair<String, String>? {

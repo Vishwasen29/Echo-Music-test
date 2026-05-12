@@ -78,7 +78,6 @@ fun SpotifyImportScreen(
     val database = LocalDatabase.current
     val scope = rememberCoroutineScope()
 
-    var spotifyClientId by rememberSaveable { mutableStateOf("") }
     var spotifyUrl by rememberSaveable { mutableStateOf("") }
     var profile by remember { mutableStateOf<SpotifyAuthStore.SpotifyProfile?>(null) }
     var playlists by remember { mutableStateOf<List<SpotifyImportHelper.SpotifyPlaylist>>(emptyList()) }
@@ -102,7 +101,7 @@ fun SpotifyImportScreen(
         importedSongs = songs
         totalTracks = songs.size
         statusText = if (songs.isEmpty()) {
-            "No songs found. Login with Spotify OAuth first for private playlists/full pagination, or check the playlist URL."
+            "No songs found. Open Browser Login first for private playlists, or check the playlist URL."
         } else {
             "Found ${songs.size} tracks in \"$playlistName\""
         }
@@ -132,7 +131,7 @@ fun SpotifyImportScreen(
 
                 if (foundIds.isNotEmpty()) {
                     withContext(Dispatchers.IO) {
-                        val songMetadataList = foundIds.distinct().mapNotNull { songId ->
+                        val songMetadataList = foundIds.mapNotNull { songId ->
                             try {
                                 com.echo.innertube.YouTube.queue(listOf(songId))
                                     .getOrNull()
@@ -165,11 +164,11 @@ fun SpotifyImportScreen(
                     }
                 }
 
-                statusText = "Done. Imported ${foundIds.distinct().size}/${songs.size} tracks" +
+                statusText = "Done. Imported ${foundIds.size}/${songs.size} tracks" +
                     if (failed.isNotEmpty()) ". ${failed.size} tracks were not matched." else ""
                 Toast.makeText(
                     context,
-                    "Playlist \"${name.ifBlank { "Spotify Import" }}\" created with ${foundIds.distinct().size} songs",
+                    "Playlist \"${name.ifBlank { "Spotify Import" }}\" created with ${foundIds.size} songs",
                     Toast.LENGTH_LONG,
                 ).show()
             } catch (e: Exception) {
@@ -181,7 +180,6 @@ fun SpotifyImportScreen(
     }
 
     LaunchedEffect(Unit) {
-        spotifyClientId = SpotifyAuthStore.getClientId(context)
         refreshSpotifyState(loadPlaylists = false)
     }
 
@@ -221,25 +219,14 @@ fun SpotifyImportScreen(
             item {
                 SpotifyLoginCard(
                     profile = profile,
-                    clientId = spotifyClientId,
                     isBusy = isLoading || isImporting,
-                    onClientIdChange = { spotifyClientId = it.trim() },
                     onLogin = {
-                        scope.launch {
-                            isLoading = true
-                            statusText = "Opening Spotify OAuth login..."
-                            try {
-                                SpotifyAuthStore.setClientId(context, spotifyClientId)
-                                context.startActivity(SpotifyAuthStore.createLoginIntent(context, spotifyClientId))
-                            } catch (e: ActivityNotFoundException) {
-                                Toast.makeText(context, "Could not open browser for Spotify login", Toast.LENGTH_LONG).show()
-                                statusText = "Could not open browser: ${e.message}"
-                            } catch (e: Exception) {
-                                Toast.makeText(context, e.message ?: "Spotify login failed", Toast.LENGTH_LONG).show()
-                                statusText = "Spotify login failed: ${e.message}"
-                            } finally {
-                                isLoading = false
-                            }
+                        try {
+                            context.startActivity(SpotifyAuthStore.createLoginIntent(context, ""))
+                        } catch (e: ActivityNotFoundException) {
+                            Toast.makeText(context, "Could not open Spotify browser login", Toast.LENGTH_LONG).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, e.message ?: "Spotify login failed", Toast.LENGTH_LONG).show()
                         }
                     },
                     onRefresh = {
@@ -249,7 +236,7 @@ fun SpotifyImportScreen(
                             try {
                                 refreshSpotifyState(loadPlaylists = false)
                                 statusText = if (profile == null) {
-                                    "Not connected yet. Add Client ID, register Redirect URI, then tap Login."
+                                    "Not connected yet. Tap Browser Login and finish Spotify login."
                                 } else {
                                     "Spotify connected as ${profile?.displayName ?: "Spotify"}."
                                 }
@@ -285,7 +272,7 @@ fun SpotifyImportScreen(
                                 try {
                                     refreshSpotifyState(loadPlaylists = true)
                                     statusText = if (playlists.isEmpty()) {
-                                        "No playlists loaded. Login first and make sure the Spotify app requested playlist scopes."
+                                        "No playlists loaded. Finish Browser Login first, then tap Load Library again."
                                     } else {
                                         "Loaded ${playlists.size} Spotify playlists."
                                     }
@@ -551,9 +538,7 @@ fun SpotifyImportScreen(
 @Composable
 private fun SpotifyLoginCard(
     profile: SpotifyAuthStore.SpotifyProfile?,
-    clientId: String,
     isBusy: Boolean,
-    onClientIdChange: (String) -> Unit,
     onLogin: () -> Unit,
     onRefresh: () -> Unit,
     onSignOut: () -> Unit,
@@ -581,7 +566,7 @@ private fun SpotifyLoginCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Spotify", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(
-                        text = profile?.let { "Connected as ${it.displayName}" } ?: "Official OAuth PKCE login",
+                        text = profile?.let { "Connected as ${it.displayName}" } ?: "Browser login like Spotube: no Client ID screen",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -589,29 +574,19 @@ private fun SpotifyLoginCard(
             }
 
             Text(
-                text = "Add Redirect URI http://127.0.0.1/callback in your Spotify Developer app. Paste only the Client ID; no client secret is needed.",
+                text = "Echo uses Spotify's browser session to fetch playlists/liked songs, then imports tracks into Echo's existing JioSaavn + YouTube playback flow.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            OutlinedTextField(
-                value = clientId,
-                onValueChange = onClientIdChange,
-                label = { Text("Spotify Client ID") },
-                placeholder = { Text("Paste Client ID from Spotify Developer Dashboard") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(
                     onClick = onLogin,
-                    enabled = !isBusy && clientId.isNotBlank(),
+                    enabled = !isBusy,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1DB954), contentColor = Color.White),
                 ) {
-                    Text(if (profile == null) "Save & Login" else "Reconnect")
+                    Text(if (profile == null) "Browser Login" else "Reconnect")
                 }
                 FilledTonalButton(
                     onClick = onRefresh,
